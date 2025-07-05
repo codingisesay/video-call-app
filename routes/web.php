@@ -16,6 +16,6 @@ use App\Http\Controllers\MeetingController;
 
 Route::get('/', function () {
     return view('welcome');
-});
+ });
 Route::get('/join/{token}', [MeetingController::class, 'join']);
 
