@@ -1,9 +1,7 @@
-// const socket = io("wss://vcall.payvance.co.in/signalling");
 const socket = io("https://vcall.payvance.co.in", {
   path: "/socket.io",
   transports: ["websocket"]
 });
-
 
 let localStream;
 let peerConnection;
@@ -68,28 +66,15 @@ async function startCall() {
         localVideo.srcObject = localStream;
         localVideo.muted = true;
 
-        peerConnection = new RTCPeerConnection({
-            iceServers: [
-                { urls: "stun:stun.l.google.com:19302" }
-            ]
-        });
+        peerConnection = createPeerConnection();
 
         localStream.getTracks().forEach(track => {
             peerConnection.addTrack(track, localStream);
         });
 
-        peerConnection.ontrack = e => {
-            remoteVideo.srcObject = e.streams[0];
-        };
-
-        peerConnection.onicecandidate = e => {
-            if (e.candidate) {
-                socket.emit("ice-candidate", e.candidate);
-            }
-        };
-
         const offer = await peerConnection.createOffer();
         await peerConnection.setLocalDescription(offer);
+        console.log("Sending offer:", offer);
         socket.emit("offer", offer);
 
         callStarted = true;
@@ -103,6 +88,7 @@ async function startCall() {
 }
 
 socket.on("offer", async offer => {
+    console.log("Received offer:", offer);
     localStream = await navigator.mediaDevices.getUserMedia({
         video: true,
         audio: true
@@ -110,29 +96,16 @@ socket.on("offer", async offer => {
     localVideo.srcObject = localStream;
     localVideo.muted = true;
 
-    peerConnection = new RTCPeerConnection({
-        iceServers: [
-            { urls: "stun:stun.l.google.com:19302" }
-        ]
-    });
+    peerConnection = createPeerConnection();
 
     localStream.getTracks().forEach(track => {
         peerConnection.addTrack(track, localStream);
     });
 
-    // peerConnection.ontrack = e => {
-    //     remoteVideo.srcObject = e.streams[0];
-    // };
-
-    peerConnection.ontrack = e => {
-    console.log("ontrack event:", e);
-    if (!remoteVideo.srcObject) {
-        remoteVideo.srcObject = e.streams[0];
-    }
-};
     await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
     const answer = await peerConnection.createAnswer();
     await peerConnection.setLocalDescription(answer);
+    console.log("Sending answer:", answer);
     socket.emit("answer", answer);
 
     callStarted = true;
@@ -142,14 +115,55 @@ socket.on("offer", async offer => {
 });
 
 socket.on("answer", async answer => {
+    console.log("Received answer:", answer);
     await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
 });
 
 socket.on("ice-candidate", async candidate => {
+    console.log("Received remote ICE candidate:", candidate);
     if (candidate) {
-        await peerConnection.addIceCandidate(candidate);
+        try {
+            await peerConnection.addIceCandidate(candidate);
+            console.log("Added remote ICE candidate.");
+        } catch (err) {
+            console.error("Error adding remote ICE candidate:", err);
+        }
     }
 });
+
+function createPeerConnection() {
+    const pc = new RTCPeerConnection({
+        iceServers: [
+            { urls: "stun:stun.l.google.com:19302" }
+        ]
+    });
+
+    pc.onicecandidate = e => {
+        if (e.candidate) {
+            console.log("Sending local ICE candidate:", e.candidate);
+            socket.emit("ice-candidate", e.candidate);
+        }
+    };
+
+    pc.ontrack = e => {
+        console.log("ontrack fired!", e);
+        if (!remoteVideo.srcObject) {
+            remoteVideo.srcObject = e.streams[0];
+            console.log("Remote video stream assigned.");
+        }
+    };
+
+    pc.onconnectionstatechange = () => {
+        console.log("Peer connection state:", pc.connectionState);
+        if (pc.connectionState === "connected") {
+            setStatus("Call connected");
+        } else if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
+            setStatus("Call disconnected");
+        }
+    };
+
+    return pc;
+}
 
 function hangup() {
     setStatus("Call Ended");
