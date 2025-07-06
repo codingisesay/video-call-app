@@ -90,7 +90,7 @@
             apiUrl: "{{ url('/api') }}"
         }
     </script>
-    <script src="https://vcall.payvance.co.in/signalling/socket.io/socket.io.js"></script>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
     <script src="{{ asset('js/video-call.js') }}"></script>
 </body>
 </html>

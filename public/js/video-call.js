@@ -1,4 +1,4 @@
-const socket = io("https://vcall.payvance.co.in/signalling");
+const socket = io("wss://vcall.payvance.co.in/signalling");
 
 let localStream;
 let peerConnection;
