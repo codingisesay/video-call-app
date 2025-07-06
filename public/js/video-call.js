@@ -1,8 +1,9 @@
 // const socket = io("wss://vcall.payvance.co.in/signalling");
 const socket = io("https://vcall.payvance.co.in", {
-  path: "/signalling/socket.io",
-  transports: ["websocket", "polling"]
+  path: "/socket.io",
+  transports: ["websocket"]
 });
+
 
 let localStream;
 let peerConnection;
