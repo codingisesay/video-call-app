@@ -8,80 +8,150 @@
         body {
             background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
             min-height: 100vh;
+            font-family: 'Segoe UI', 'Roboto', Arial, sans-serif;
+        }
+        .video-call-header {
+            text-align: center;
+            margin-top: 36px;
+            color: #2d3a4b;
+            font-weight: 700;
+            font-size: 2.2rem;
+            letter-spacing: 1px;
         }
         .video-container {
             position: relative;
-            width: 640px;
-            height: 480px;
-            background: #222;
-            border-radius: 18px;
-            box-shadow: 0 8px 32px rgba(60,60,120,0.18);
+            width: 700px;
+            height: 500px;
+            background: #1a2233;
+            border-radius: 22px;
+            box-shadow: 0 12px 36px rgba(60,60,120,0.18);
             overflow: hidden;
             margin: 40px auto 0 auto;
+            border: 1.5px solid #e0e6ed;
         }
         #remoteVideo {
             width: 100%;
             height: 100%;
             object-fit: cover;
             background: #000;
+            border-radius: 22px;
         }
-        #localVideo {
-            width: 160px;
-            height: 120px;
-            position: absolute;
-            left: 420px;
-            top: 300px;
-            border-radius: 16px;
-            border: 3px solid #fff;
-            box-shadow: 0 2px 12px rgba(0,0,0,0.18);
-            cursor: grab;
-            z-index: 20;
-            background: #222;
-            transition: box-shadow 0.2s;
+    #localVideo {
+    width: 170px;
+    height: 130px;
+    position: absolute;
+    right: 24px;
+    top: 24px;
+    border-radius: 18px;
+    border: 3px solid #fff;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.22);
+    cursor: grab;
+    z-index: 20;
+    background: #222;
+    transition: box-shadow 0.2s, border 0.2s;
+}
+        #localVideo:active {
+            box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+            border: 3px solid #3498db;
         }
-        .controls {
-            position: absolute;
-            bottom: 18px;
-            left: 0;
-            width: 100%;
-            display: flex;
-            justify-content: center;
-            gap: 18px;
-            z-index: 30;
-        }
+            .vc-btn {
+        background: linear-gradient(90deg, #3498db 0%, #6dd5fa 100%);
+        color: #fff;
+        border: none;
+        border-radius: 8px;
+        padding: 8px 20px;
+        font-weight: 600;
+        font-size: 0.98rem;
+        cursor: pointer;
+        box-shadow: 0 1px 6px rgba(52,152,219,0.10);
+        transition: background 0.2s, box-shadow 0.2s, transform 0.1s;
+        outline: none;
+        min-width: 110px;
+    }
+    .vc-btn:active {
+        background: linear-gradient(90deg, #2980b9 0%, #3498db 100%);
+        transform: scale(0.97);
+    }
+    .vc-btn.start {
+        background: linear-gradient(90deg, #27ae60 0%, #43e97b 100%);
+    }
+    .vc-btn.end {
+        background: linear-gradient(90deg, #e67e22 0%, #f7971e 100%);
+    }
+    .vc-btn.record {
+        background: linear-gradient(90deg, #2980b9 0%, #6dd5fa 100%);
+    }
+    .vc-btn.stop {
+        background: linear-gradient(90deg, #c0392b 0%, #e74c3c 100%);
+    }
+    .controls {
+        position: absolute;
+        bottom: 24px;
+        left: 0;
+        width: 100%;
+        display: flex;
+        justify-content: center;
+        gap: 14px;
+        z-index: 30;
+    }
         .status-badge {
             position: absolute;
-            top: 16px;
-            left: 16px;
+            top: 22px;
+            left: 22px;
             z-index: 10;
             background: #3498db;
             color: #fff;
-            padding: 6px 18px;
-            border-radius: 12px;
-            font-weight: 600;
-            font-size: 15px;
+            padding: 8px 26px;
+            border-radius: 14px;
+            font-weight: 700;
+            font-size: 1.02rem;
             box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            letter-spacing: 0.5px;
+            transition: background 0.2s;
         }
         .status-badge.recording {
             background: #e74c3c;
         }
+        .vc-footer {
+            text-align: center;
+            margin-top: 38px;
+            color: #888;
+            font-size: 1.04rem;
+            letter-spacing: 0.2px;
+        }
+        @media (max-width: 800px) {
+             .video-container {
+        width: 98vw;
+        height: 60vw;
+        min-width: 320px;
+        min-height: 240px;
+        max-width: 99vw;
+        max-height: 80vw;
+    }
+    #localVideo {
+        right: 12px;
+        top: 12px;
+        left: unset;
+        bottom: unset;
+    }
+        }
     </style>
 </head>
 <body>
-    <h2 style="text-align:center; margin-top:30px; color:#2d3a4b; font-weight:700;">Video Call Page</h2>
+    <div class="video-call-header">Video Call</div>
     <div class="video-container">
         <div id="statusBadge" class="status-badge">Idle</div>
         <video id="remoteVideo" autoplay playsinline></video>
         <video id="localVideo" autoplay muted playsinline></video>
         <canvas id="mixedCanvas" style="display:none;"></canvas>
         <div class="controls">
-            <button id="startCallBtn" style="background:#27ae60;">Start Call</button>
-            <button id="hangupBtn" style="background:#e67e22;">End Call</button>
-            <button id="startRecordBtn" style="background:#2980b9;">Start Recording</button>
-            <button id="stopRecordBtn" style="background:#c0392b;">End & Upload Recording</button>
+            <button id="startCallBtn" class="vc-btn start">Start Call</button>
+            <button id="hangupBtn" class="vc-btn end">End Call</button>
+            <button id="startRecordBtn" class="vc-btn record">Start Recording</button>
+            <button id="stopRecordBtn" class="vc-btn stop">End & Upload Recording</button>
         </div>
     </div>
-    <div style="text-align:center; margin-top:30px; color:#888; font-size:15px;">
+    <div class="vc-footer">
         <span>Powered by Payvance DAO</span>
     </div>
     <script>
@@ -93,4 +163,3 @@
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
     <script src="{{ asset('js/video-call.js') }}"></script>
 </body>
-</html>
