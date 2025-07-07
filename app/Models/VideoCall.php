@@ -7,9 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 class VideoCall extends Model
 {
     protected $fillable = [
-        'agent_id',
-        'client_id',
-        'call_token',
+        'video_meeting_id',
         'file_path',
         'duration_seconds',
         'started_at',
