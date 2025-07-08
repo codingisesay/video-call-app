@@ -82,7 +82,10 @@ socket.on("offer", async (offer) => {
   await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
   const answer = await peerConnection.createAnswer();
   await peerConnection.setLocalDescription(answer);
-  socket.emit("answer", answer);
+  socket.emit("answer", {
+    roomId: window.Laravel.callToken,
+    answer: answer
+  });
 });
 
 socket.on("answer", async (answer) => {
@@ -112,7 +115,10 @@ function createPeerConnection() {
 
   peerConnection.onicecandidate = (e) => {
     if (e.candidate) {
-      socket.emit("ice-candidate", e.candidate);
+      socket.emit("ice-candidate", {
+        roomId: window.Laravel.callToken,
+        candidate: e.candidate
+      });
     }
   };
 
@@ -129,9 +135,7 @@ function createPeerConnection() {
         startPiPDrawing();
         startRecording();
       }
-    } else if (
-      ["failed", "disconnected", "closed"].includes(peerConnection.connectionState)
-    ) {
+    } else if (["failed", "disconnected", "closed"].includes(peerConnection.connectionState)) {
       setStatus("Call disconnected");
       stopPiPDrawing();
       stopRecording();
@@ -142,7 +146,10 @@ function createPeerConnection() {
 async function createAndSendOffer() {
   const offer = await peerConnection.createOffer();
   await peerConnection.setLocalDescription(offer);
-  socket.emit("offer", offer);
+  socket.emit("offer", {
+    roomId: window.Laravel.callToken,
+    offer: offer
+  });
 }
 
 function hangup() {
