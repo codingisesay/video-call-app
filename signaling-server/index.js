@@ -7,21 +7,36 @@ const io = new Server(5000, {
 });
 
 io.on("connection", socket => {
-  console.log("New connection!");
+  console.log("New connection:", socket.id);
 
-  socket.on("offer", data => {
-    console.log("Offer received");
-    socket.broadcast.emit("offer", data);
+  socket.on("joinRoom", (roomId) => {
+    socket.join(roomId);
+    const roomSize = io.sockets.adapter.rooms.get(roomId)?.size || 0;
+    console.log(`User joined room ${roomId}, size: ${roomSize}`);
+
+    // Let the client know whether they should be caller or callee
+    socket.emit("joinedRoom", {
+      isCaller: roomSize === 1
+    });
   });
 
-  socket.on("answer", data => {
-    console.log("Answer received");
-    socket.broadcast.emit("answer", data);
+  socket.on("offer", (data) => {
+    console.log("Offer received, broadcasting in room", data.roomId);
+    socket.to(data.roomId).emit("offer", data.offer);
   });
 
-  socket.on("ice-candidate", data => {
-    console.log("ICE Candidate received");
-    socket.broadcast.emit("ice-candidate", data);
+  socket.on("answer", (data) => {
+    console.log("Answer received, broadcasting in room", data.roomId);
+    socket.to(data.roomId).emit("answer", data.answer);
+  });
+
+  socket.on("ice-candidate", (data) => {
+    console.log("ICE candidate received, broadcasting in room", data.roomId);
+    socket.to(data.roomId).emit("ice-candidate", data.candidate);
+  });
+
+  socket.on("disconnect", () => {
+    console.log("Disconnected:", socket.id);
   });
 });
 
