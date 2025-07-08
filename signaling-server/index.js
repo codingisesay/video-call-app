@@ -17,6 +17,10 @@ io.on("connection", socket => {
     socket.emit("joinedRoom", {
       isCaller: roomSize === 1
     });
+
+    if (roomSize > 1) {
+      socket.to(roomId).emit("peer-joined");
+    }
   });
 
   socket.on("offer", (data) => {
