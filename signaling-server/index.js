@@ -10,15 +10,23 @@ io.on("connection", socket => {
   console.log("New connection:", socket.id);
 
   socket.on("joinRoom", (roomId) => {
+    // Check room size BEFORE joining
+    const room = io.sockets.adapter.rooms.get(roomId);
+    const roomSize = room ? room.size : 0;
+
+    // The first person becomes the caller
+    const isCaller = roomSize === 0;
+
     socket.join(roomId);
-    const roomSize = io.sockets.adapter.rooms.get(roomId)?.size || 0;
-    console.log(`User joined room ${roomId}, size: ${roomSize}`);
+
+    console.log(`User joined room ${roomId}. Caller? ${isCaller}`);
 
     socket.emit("joinedRoom", {
-      isCaller: roomSize === 1
+      isCaller: isCaller
     });
 
-    if (roomSize > 1) {
+    // Notify others that a peer joined
+    if (roomSize > 0) {
       socket.to(roomId).emit("peer-joined");
     }
   });
