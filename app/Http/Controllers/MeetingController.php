@@ -49,14 +49,30 @@ public function create(Request $request)
     }
 }
 
-    public function join($token)
-    {
-        $meeting = VideoMeeting::where('meeting_token', $token)
-            ->where('expires_at', '>', now())
-            ->firstOrFail();
+    // public function join($token)
+    // {
+    //     $meeting = VideoMeeting::where('meeting_token', $token)
+    //         ->where('expires_at', '>', now())
+    //         ->firstOrFail();
 
-        return view('video-call', [
+    //     return view('video-call', [
+    //         'meeting' => $meeting,
+    //     ]);
+    // }
+
+    public function join($token)
+{
+    $meeting = VideoMeeting::where('meeting_token', $token)
+        ->where('expires_at', '>', now())
+        ->firstOrFail();
+
+    return response(
+        view('video-call', [
             'meeting' => $meeting,
-        ]);
-    }
+        ])
+    )
+    ->header('Content-Security-Policy', "frame-ancestors https://172.16.1.223:5174;")
+    ->header('X-Frame-Options', '');
+}
+
 }
