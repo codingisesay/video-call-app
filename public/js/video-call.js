@@ -10,11 +10,11 @@ let recordedChunks = [];
 let mixedCanvas = document.getElementById("mixedCanvas");
 let ctx = mixedCanvas.getContext("2d");
 let mixAnimationId;
+let isCaller = false;
 let callStarted = false;
 let recording = false;
 let callEnded = false;
 
-// PiP drag state
 let pipPos = { x: 420, y: 300 };
 let dragging = false;
 let dragOffset = { x: 0, y: 0 };
@@ -23,230 +23,216 @@ const localVideo = document.getElementById("localVideo");
 const remoteVideo = document.getElementById("remoteVideo");
 const statusBadge = document.getElementById("statusBadge");
 
-function setStatus(text, recording = false) {
-    statusBadge.textContent = text;
-    if (recording) statusBadge.classList.add('recording');
-    else statusBadge.classList.remove('recording');
+function setStatus(text, isRecording = false) {
+  statusBadge.textContent = text;
+  if (isRecording) statusBadge.classList.add("recording");
+  else statusBadge.classList.remove("recording");
 }
 
 function updatePipPosition() {
-    localVideo.style.left = pipPos.x + "px";
-    localVideo.style.top = pipPos.y + "px";
+  localVideo.style.left = pipPos.x + "px";
+  localVideo.style.top = pipPos.y + "px";
 }
 
-// PiP drag handlers
-localVideo.addEventListener('mousedown', function(e) {
-    dragging = true;
-    dragOffset.x = e.clientX - pipPos.x;
-    dragOffset.y = e.clientY - pipPos.y;
+localVideo.addEventListener("mousedown", (e) => {
+  dragging = true;
+  dragOffset.x = e.clientX - pipPos.x;
+  dragOffset.y = e.clientY - pipPos.y;
 });
-window.addEventListener('mousemove', function(e) {
-    if (dragging) {
-        pipPos.x = Math.max(0, Math.min(640 - 160, e.clientX - dragOffset.x));
-        pipPos.y = Math.max(0, Math.min(480 - 120, e.clientY - dragOffset.y));
-        updatePipPosition();
-    }
+window.addEventListener("mousemove", (e) => {
+  if (dragging) {
+    pipPos.x = Math.max(0, Math.min(640 - 160, e.clientX - dragOffset.x));
+    pipPos.y = Math.max(0, Math.min(480 - 120, e.clientY - dragOffset.y));
+    updatePipPosition();
+  }
 });
-window.addEventListener('mouseup', function() {
-    dragging = false;
+window.addEventListener("mouseup", () => {
+  dragging = false;
 });
 
-document.getElementById("startCallBtn").onclick = startCall;
-document.getElementById("startRecordBtn").onclick = startRecording;
-document.getElementById("stopRecordBtn").onclick = stopRecording;
 document.getElementById("hangupBtn").onclick = hangup;
 
-async function startCall() {
-    setStatus("Requesting camera/mic...");
-    try {
-        localStream = await navigator.mediaDevices.getUserMedia({
-            video: true,
-            audio: true
-        });
-        localVideo.srcObject = localStream;
-        localVideo.muted = true;
+start();
 
-        peerConnection = createPeerConnection();
-
-        localStream.getTracks().forEach(track => {
-            peerConnection.addTrack(track, localStream);
-        });
-
-        const offer = await peerConnection.createOffer();
-        await peerConnection.setLocalDescription(offer);
-        console.log("Sending offer:", offer);
-        socket.emit("offer", offer);
-
-        callStarted = true;
-        callEnded = false;
-        setStatus("Call Started");
-        startPiPDrawing();
-    } catch (err) {
-        setStatus("Camera/Mic error: " + err.message);
-        alert("Camera/Mic error: " + err.message);
-    }
-}
-
-socket.on("offer", async offer => {
-    console.log("Received offer:", offer);
-    localStream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: true
-    });
+async function start() {
+  setStatus("Initializing camera...");
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
     localVideo.srcObject = localStream;
     localVideo.muted = true;
 
-    peerConnection = createPeerConnection();
+    socket.emit("joinRoom", window.Laravel.callToken);
+    setStatus("Waiting for peer...");
+  } catch (err) {
+    setStatus("Camera/Mic error: " + err.message);
+    alert(err.message);
+  }
+}
 
-    localStream.getTracks().forEach(track => {
-        peerConnection.addTrack(track, localStream);
-    });
-
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-    const answer = await peerConnection.createAnswer();
-    await peerConnection.setLocalDescription(answer);
-    console.log("Sending answer:", answer);
-    socket.emit("answer", answer);
-
-    callStarted = true;
-    callEnded = false;
-    setStatus("Call Started");
-    startPiPDrawing();
+socket.on("joinedRoom", (data) => {
+  isCaller = data.isCaller;
+  if (isCaller) {
+    createPeerConnection();
+    createAndSendOffer();
+  }
 });
 
-socket.on("answer", async answer => {
-    console.log("Received answer:", answer);
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+socket.on("offer", async (offer) => {
+  if (!peerConnection) createPeerConnection();
+  await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+  const answer = await peerConnection.createAnswer();
+  await peerConnection.setLocalDescription(answer);
+  socket.emit("answer", answer);
 });
 
-socket.on("ice-candidate", async candidate => {
-    console.log("Received remote ICE candidate:", candidate);
-    if (candidate) {
-        try {
-            await peerConnection.addIceCandidate(candidate);
-            console.log("Added remote ICE candidate.");
-        } catch (err) {
-            console.error("Error adding remote ICE candidate:", err);
-        }
+socket.on("answer", async (answer) => {
+  await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+});
+
+socket.on("ice-candidate", async (candidate) => {
+  if (candidate && peerConnection) {
+    try {
+      await peerConnection.addIceCandidate(candidate);
+    } catch (err) {
+      console.error("Error adding ICE:", err);
     }
+  }
 });
 
 function createPeerConnection() {
-    const pc = new RTCPeerConnection({
-        iceServers: [
-            { urls: "stun:stun.l.google.com:19302" }
-        ]
-    });
+  peerConnection = new RTCPeerConnection({
+    iceServers: [
+      { urls: "stun:stun.l.google.com:19302" }
+    ]
+  });
 
-    pc.onicecandidate = e => {
-        if (e.candidate) {
-            console.log("Sending local ICE candidate:", e.candidate);
-            socket.emit("ice-candidate", e.candidate);
-        }
-    };
+  localStream.getTracks().forEach((track) => {
+    peerConnection.addTrack(track, localStream);
+  });
 
-    pc.ontrack = e => {
-        console.log("ontrack fired!", e);
-        if (!remoteVideo.srcObject) {
-            remoteVideo.srcObject = e.streams[0];
-            console.log("Remote video stream assigned.");
-        }
-    };
+  peerConnection.onicecandidate = (e) => {
+    if (e.candidate) {
+      socket.emit("ice-candidate", e.candidate);
+    }
+  };
 
-    pc.onconnectionstatechange = () => {
-        console.log("Peer connection state:", pc.connectionState);
-        if (pc.connectionState === "connected") {
-            setStatus("Call connected");
-        } else if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
-            setStatus("Call disconnected");
-        }
-    };
+  peerConnection.ontrack = (e) => {
+    remoteVideo.srcObject = e.streams[0];
+    remoteVideo.muted = false;
+  };
 
-    return pc;
+  peerConnection.onconnectionstatechange = () => {
+    if (peerConnection.connectionState === "connected") {
+      if (!callStarted) {
+        callStarted = true;
+        setStatus("Call connected");
+        startPiPDrawing();
+        startRecording();
+      }
+    } else if (
+      ["failed", "disconnected", "closed"].includes(peerConnection.connectionState)
+    ) {
+      setStatus("Call disconnected");
+      stopPiPDrawing();
+      stopRecording();
+    }
+  };
+}
+
+async function createAndSendOffer() {
+  const offer = await peerConnection.createOffer();
+  await peerConnection.setLocalDescription(offer);
+  socket.emit("offer", offer);
 }
 
 function hangup() {
-    setStatus("Call Ended");
-    callStarted = false;
-    callEnded = true;
-    if (peerConnection) peerConnection.close();
-    if (localStream) localStream.getTracks().forEach(track => track.stop());
-    if (remoteVideo.srcObject) {
-        remoteVideo.srcObject.getTracks?.().forEach(track => track.stop());
-        remoteVideo.srcObject = null;
-    }
-    if (localVideo.srcObject) {
-        localVideo.srcObject.getTracks?.().forEach(track => track.stop());
-        localVideo.srcObject = null;
-    }
-    stopPiPDrawing();
+  setStatus("Call Ended");
+  callEnded = true;
+  callStarted = false;
+
+  if (peerConnection) peerConnection.close();
+
+  if (localStream) {
+    localStream.getTracks().forEach((t) => t.stop());
+    localVideo.srcObject = null;
+  }
+  if (remoteVideo.srcObject) {
+    remoteVideo.srcObject.getTracks?.().forEach((t) => t.stop());
+    remoteVideo.srcObject = null;
+  }
+  stopPiPDrawing();
+  stopRecording();
 }
 
 function startPiPDrawing() {
-    mixedCanvas.width = 640;
-    mixedCanvas.height = 480;
-    function draw() {
-        ctx.clearRect(0, 0, 640, 480);
-        if (remoteVideo.readyState >= 2) {
-            ctx.drawImage(remoteVideo, 0, 0, 640, 480);
-        }
-        if (localVideo.readyState >= 2) {
-            ctx.drawImage(localVideo, pipPos.x, pipPos.y, 160, 120);
-        }
-        if (!callEnded) mixAnimationId = requestAnimationFrame(draw);
+  mixedCanvas.width = 640;
+  mixedCanvas.height = 480;
+  function draw() {
+    ctx.clearRect(0, 0, 640, 480);
+    if (remoteVideo.readyState >= 2) {
+      ctx.drawImage(remoteVideo, 0, 0, 640, 480);
     }
-    draw();
+    if (localVideo.readyState >= 2) {
+      ctx.drawImage(localVideo, pipPos.x, pipPos.y, 160, 120);
+    }
+    if (!callEnded) mixAnimationId = requestAnimationFrame(draw);
+  }
+  draw();
 }
+
 function stopPiPDrawing() {
-    cancelAnimationFrame(mixAnimationId);
+  cancelAnimationFrame(mixAnimationId);
 }
 
 function startRecording() {
-    if (!callStarted) return;
-    setStatus("Recording...", true);
-    recording = true;
-    recordedChunks = [];
-    const stream = mixedCanvas.captureStream(30);
-    recorder = new MediaRecorder(stream, {
-        mimeType: "video/webm"
-    });
-    recorder.ondataavailable = e => {
-        if (e.data.size > 0) recordedChunks.push(e.data);
-    };
-    recorder.onstop = () => {
-        const blob = new Blob(recordedChunks, { type: "video/webm" });
-        uploadRecording(blob);
-    };
-    recorder.start();
+  if (!callStarted) return;
+  if (recording) return;
+  setStatus("Recording...", true);
+  recording = true;
+  recordedChunks = [];
+
+  const stream = mixedCanvas.captureStream(30);
+  recorder = new MediaRecorder(stream, { mimeType: "video/webm" });
+
+  recorder.ondataavailable = (e) => {
+    if (e.data.size > 0) recordedChunks.push(e.data);
+  };
+
+  recorder.onstop = () => {
+    const blob = new Blob(recordedChunks, { type: "video/webm" });
+    uploadRecording(blob);
+  };
+
+  recorder.start();
 }
 
 function stopRecording() {
-    if (recorder && recording) {
-        setStatus("Uploading...");
-        recorder.stop();
-        recording = false;
-    }
+  if (recorder && recording) {
+    setStatus("Uploading...");
+    recorder.stop();
+    recording = false;
+  }
 }
 
 function uploadRecording(blob) {
-    const formData = new FormData();
-    formData.append("video", blob, "call_recording.webm");
-    formData.append("call_token", window.Laravel.callToken);
-    formData.append("duration", 120);
-    formData.append("started_at", new Date().toISOString());
-    formData.append("ended_at", new Date().toISOString());
+  const formData = new FormData();
+  formData.append("video", blob, "call_recording.webm");
+  formData.append("call_token", window.Laravel.callToken);
+  formData.append("duration", 120);
+  formData.append("started_at", new Date().toISOString());
+  formData.append("ended_at", new Date().toISOString());
 
-    fetch(window.Laravel.apiUrl + "/upload-video", {
-        method: "POST",
-        body: formData
+  fetch(window.Laravel.apiUrl + "/upload-video", {
+    method: "POST",
+    body: formData
+  })
+    .then((res) => res.json())
+    .then((data) => {
+      setStatus("Upload successful!");
+      console.log("Upload complete:", data);
     })
-        .then(response => response.json())
-        .then(data => {
-            setStatus("Upload successful!");
-            console.log("Upload successful:", data);
-        })
-        .catch(err => {
-            setStatus("Upload error");
-            console.error(err);
-        });
+    .catch((err) => {
+      setStatus("Upload error");
+      console.error(err);
+    });
 }
