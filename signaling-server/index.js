@@ -14,7 +14,6 @@ io.on("connection", socket => {
     const roomSize = io.sockets.adapter.rooms.get(roomId)?.size || 0;
     console.log(`User joined room ${roomId}, size: ${roomSize}`);
 
-    // Let the client know whether they should be caller or callee
     socket.emit("joinedRoom", {
       isCaller: roomSize === 1
     });

@@ -5,8 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
     <title>Video Call</title>
     <style>
-        /* ... (keep all your existing styles untouched) ... */
-                body {
+        body {
             background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
             min-height: 100vh;
             font-family: 'Segoe UI', 'Roboto', Arial, sans-serif;
@@ -37,64 +36,55 @@
             background: #000;
             border-radius: 22px;
         }
-    #localVideo {
-    width: 170px;
-    height: 130px;
-    position: absolute;
-    right: 24px;
-    top: 24px;
-    border-radius: 18px;
-    border: 3px solid #fff;
-    box-shadow: 0 4px 18px rgba(0,0,0,0.22);
-    cursor: grab;
-    z-index: 20;
-    background: #222;
-    transition: box-shadow 0.2s, border 0.2s;
-}
+        #localVideo {
+            width: 170px;
+            height: 130px;
+            position: absolute;
+            right: 24px;
+            top: 24px;
+            border-radius: 18px;
+            border: 3px solid #fff;
+            box-shadow: 0 4px 18px rgba(0,0,0,0.22);
+            cursor: grab;
+            z-index: 20;
+            background: #222;
+            transition: box-shadow 0.2s, border 0.2s;
+        }
         #localVideo:active {
             box-shadow: 0 2px 8px rgba(0,0,0,0.18);
             border: 3px solid #3498db;
         }
-            .vc-btn {
-        background: linear-gradient(90deg, #3498db 0%, #6dd5fa 100%);
-        color: #fff;
-        border: none;
-        border-radius: 8px;
-        padding: 8px 20px;
-        font-weight: 600;
-        font-size: 0.98rem;
-        cursor: pointer;
-        box-shadow: 0 1px 6px rgba(52,152,219,0.10);
-        transition: background 0.2s, box-shadow 0.2s, transform 0.1s;
-        outline: none;
-        min-width: 110px;
-    }
-    .vc-btn:active {
-        background: linear-gradient(90deg, #2980b9 0%, #3498db 100%);
-        transform: scale(0.97);
-    }
-    .vc-btn.start {
-        background: linear-gradient(90deg, #27ae60 0%, #43e97b 100%);
-    }
-    .vc-btn.end {
-        background: linear-gradient(90deg, #e67e22 0%, #f7971e 100%);
-    }
-    .vc-btn.record {
-        background: linear-gradient(90deg, #2980b9 0%, #6dd5fa 100%);
-    }
-    .vc-btn.stop {
-        background: linear-gradient(90deg, #c0392b 0%, #e74c3c 100%);
-    }
-    .controls {
-        position: absolute;
-        bottom: 24px;
-        left: 0;
-        width: 100%;
-        display: flex;
-        justify-content: center;
-        gap: 14px;
-        z-index: 30;
-    }
+        .vc-btn {
+            background: linear-gradient(90deg, #3498db 0%, #6dd5fa 100%);
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            padding: 8px 20px;
+            font-weight: 600;
+            font-size: 0.98rem;
+            cursor: pointer;
+            box-shadow: 0 1px 6px rgba(52,152,219,0.10);
+            transition: background 0.2s, box-shadow 0.2s, transform 0.1s;
+            outline: none;
+            min-width: 110px;
+        }
+        .vc-btn:active {
+            background: linear-gradient(90deg, #2980b9 0%, #3498db 100%);
+            transform: scale(0.97);
+        }
+        .vc-btn.end {
+            background: linear-gradient(90deg, #e67e22 0%, #f7971e 100%);
+        }
+        .controls {
+            position: absolute;
+            bottom: 24px;
+            left: 0;
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            gap: 14px;
+            z-index: 30;
+        }
         .status-badge {
             position: absolute;
             top: 22px;
@@ -121,20 +111,20 @@
             letter-spacing: 0.2px;
         }
         @media (max-width: 800px) {
-             .video-container {
-        width: 98vw;
-        height: 60vw;
-        min-width: 320px;
-        min-height: 240px;
-        max-width: 99vw;
-        max-height: 80vw;
-    }
-    #localVideo {
-        right: 12px;
-        top: 12px;
-        left: unset;
-        bottom: unset;
-    }
+            .video-container {
+                width: 98vw;
+                height: 60vw;
+                min-width: 320px;
+                min-height: 240px;
+                max-width: 99vw;
+                max-height: 80vw;
+            }
+            #localVideo {
+                right: 12px;
+                top: 12px;
+                left: unset;
+                bottom: unset;
+            }
         }
     </style>
 </head>
