@@ -17,8 +17,8 @@ use App\Http\Controllers\MeetingController;
 Route::get('/', function () {
     return view('welcome');
  });
-//  Route::get('/interface', function () {
-//     return view('video-call');
-//  });
+ Route::get('/interface', function () {
+    return view('video-call');
+ });
 Route::get('/join/{token}', [MeetingController::class, 'join']);
 
