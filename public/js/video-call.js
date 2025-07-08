@@ -52,6 +52,13 @@ window.addEventListener("mouseup", () => {
 
 document.getElementById("hangupBtn").onclick = hangup;
 
+// Add user gesture fallback for audio
+document.body.addEventListener("click", () => {
+  if (remoteVideo) {
+    remoteVideo.play().catch(e => console.error("Playback error:", e));
+  }
+});
+
 start();
 
 async function start() {
@@ -70,8 +77,8 @@ async function start() {
 }
 
 socket.on("joinedRoom", (data) => {
-  isCaller = data.isCaller;
   console.log("joinedRoom", data);
+  isCaller = data.isCaller;
   if (isCaller) {
     createPeerConnection();
     createAndSendOffer();
@@ -136,8 +143,16 @@ function createPeerConnection() {
   };
 
   peerConnection.ontrack = (e) => {
+    console.log("Received remote track");
     remoteVideo.srcObject = e.streams[0];
     remoteVideo.muted = false;
+    remoteVideo.volume = 1.0;
+
+    remoteVideo.play().catch(err => {
+      console.error("Remote video playback error:", err);
+    });
+
+    console.log("Remote audio tracks:", e.streams[0].getAudioTracks());
   };
 
   peerConnection.onconnectionstatechange = () => {
