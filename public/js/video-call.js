@@ -71,13 +71,23 @@ async function start() {
 
 socket.on("joinedRoom", (data) => {
   isCaller = data.isCaller;
+  console.log("joinedRoom", data);
   if (isCaller) {
     createPeerConnection();
     createAndSendOffer();
   }
 });
 
+socket.on("peer-joined", () => {
+  console.log("peer-joined received");
+  if (isCaller && peerConnection) {
+    console.log("Sending offer because peer joined...");
+    createAndSendOffer();
+  }
+});
+
 socket.on("offer", async (offer) => {
+  console.log("Received offer");
   if (!peerConnection) createPeerConnection();
   await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
   const answer = await peerConnection.createAnswer();
@@ -89,13 +99,16 @@ socket.on("offer", async (offer) => {
 });
 
 socket.on("answer", async (answer) => {
+  console.log("Received answer");
   await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
 });
 
 socket.on("ice-candidate", async (candidate) => {
+  console.log("Received ICE candidate");
   if (candidate && peerConnection) {
     try {
       await peerConnection.addIceCandidate(candidate);
+      console.log("Added ICE candidate");
     } catch (err) {
       console.error("Error adding ICE:", err);
     }
@@ -128,6 +141,7 @@ function createPeerConnection() {
   };
 
   peerConnection.onconnectionstatechange = () => {
+    console.log("Peer connection state:", peerConnection.connectionState);
     if (peerConnection.connectionState === "connected") {
       if (!callStarted) {
         callStarted = true;
@@ -144,6 +158,7 @@ function createPeerConnection() {
 }
 
 async function createAndSendOffer() {
+  console.log("Creating and sending offer...");
   const offer = await peerConnection.createOffer();
   await peerConnection.setLocalDescription(offer);
   socket.emit("offer", {
