@@ -11,6 +11,12 @@ class VideoController extends Controller
 {
 public function upload(Request $request)
 {
+
+        // Increase PHP runtime limits
+    ini_set('upload_max_filesize', '100M');
+    ini_set('post_max_size', '100M');
+    ini_set('max_execution_time', '300');
+    ini_set('memory_limit', '512M');
     $meetingToken = $request->input('call_token');
 
     $videoMeeting = VideoMeeting::where('meeting_token', $meetingToken)->first();
