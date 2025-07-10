@@ -61,18 +61,23 @@ public function upload(Request $request)
 }
 
 
-public function fetchVideoDetails($meetingToken)
+public function fetchVideoDetailsByApplication($applicationId)
 {
     try {
-        // Join VideoCall and VideoMeeting using meeting token
-        $data = VideoCall::join('video_meetings', 'video_calls.video_meeting_id', '=', 'video_meetings.id')
-            ->where('video_meetings.meeting_token', $meetingToken)
+        $data = VideoCall::join(
+                'video_meetings',
+                'video_calls.video_meeting_id',
+                '=',
+                'video_meetings.id'
+            )
+            ->where('video_meetings.application_id', $applicationId)
             ->select(
                 'video_calls.*',
                 'video_meetings.project_name',
                 'video_meetings.customer_name',
                 'video_meetings.customer_email',
                 'video_meetings.meeting_token',
+                'video_meetings.application_id',
                 'video_meetings.expires_at'
             )
             ->get();
@@ -80,7 +85,7 @@ public function fetchVideoDetails($meetingToken)
         if ($data->isEmpty()) {
             return response()->json([
                 'success' => false,
-                'message' => 'No video call found for this meeting token.'
+                'message' => 'No video call found for this application ID.'
             ], 404);
         }
 
@@ -95,4 +100,6 @@ public function fetchVideoDetails($meetingToken)
         ], 500);
     }
 }
+
+
 }
