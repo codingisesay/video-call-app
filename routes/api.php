@@ -20,4 +20,4 @@ use App\Http\Controllers\VideoController;
 
 Route::post('/create-meeting', [MeetingController::class, 'create']);
 Route::post('/upload-video', [VideoController::class, 'upload']);
-Route::get('/fetch-video-details/{applicationId}', [VideoController::class, 'fetchVideoDetailsByApplication']);
+Route::post('/fetch-video-details', [VideoController::class, 'fetchVideoDetailsByApplicationOrKyc']);
