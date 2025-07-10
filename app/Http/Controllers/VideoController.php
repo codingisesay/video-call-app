@@ -11,16 +11,24 @@ class VideoController extends Controller
 {
 public function upload(Request $request)
 {
+    $meetingToken = $request->input('call_token');
+
+    $videoMeeting = VideoMeeting::where('meeting_token', $meetingToken)->first();
+
+    if (!$videoMeeting) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Invalid meeting token.'
+        ], 404);
+    }
+
     try {
         if ($request->hasFile('video')) {
             $path = $request->file('video')->store('videos');
 
             $videoCall = VideoCall::create([
-                'video_meeting_id' => $request->video_meeting_id,
+                'video_meeting_id' => $videoMeeting->id,
                 'file_path'        => $path,
-                'duration_seconds' => $request->duration,
-                'started_at'       => $request->started_at,
-                'ended_at'         => $request->ended_at,
                 'status'           => 'uploaded',
                 'created_at'       => now(),
                 'updated_at'       => now(),
