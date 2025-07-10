@@ -11,6 +11,7 @@ class VideoMeeting extends Model
         'meeting_token',
         'agent_id',
         'application_id',
+        'kyc_application_id',
         'customer_name',
         'customer_email',
         'expires_at',
