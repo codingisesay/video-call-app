@@ -61,16 +61,25 @@ public function upload(Request $request)
 }
 
 
-public function fetchVideoDetailsByApplication($applicationId)
+public function fetchVideoDetailsByApplicationOrKyc(Request $request)
 {
     try {
-        $data = VideoCall::join(
+        $applicationId = $request->application_id;
+        $kycApplicationId = $request->kyc_application_id;
+
+        if (!$applicationId && !$kycApplicationId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Either application_id or kyc_application_id must be provided.',
+            ], 422);
+        }
+
+        $query = VideoCall::join(
                 'video_meetings',
                 'video_calls.video_meeting_id',
                 '=',
                 'video_meetings.id'
             )
-            ->where('video_meetings.application_id', $applicationId)
             ->select(
                 'video_calls.*',
                 'video_meetings.project_name',
@@ -78,14 +87,22 @@ public function fetchVideoDetailsByApplication($applicationId)
                 'video_meetings.customer_email',
                 'video_meetings.meeting_token',
                 'video_meetings.application_id',
+                'video_meetings.kyc_application_id',
                 'video_meetings.expires_at'
-            )
-            ->get();
+            );
+
+        if ($applicationId) {
+            $query->where('video_meetings.application_id', $applicationId);
+        } else {
+            $query->where('video_meetings.kyc_application_id', $kycApplicationId);
+        }
+
+        $data = $query->get();
 
         if ($data->isEmpty()) {
             return response()->json([
                 'success' => false,
-                'message' => 'No video call found for this application ID.'
+                'message' => 'No video call found for the given application or KYC application ID.'
             ], 404);
         }
 
@@ -93,6 +110,7 @@ public function fetchVideoDetailsByApplication($applicationId)
             'success' => true,
             'data' => $data
         ]);
+
     } catch (\Exception $e) {
         return response()->json([
             'success' => false,
@@ -100,6 +118,7 @@ public function fetchVideoDetailsByApplication($applicationId)
         ], 500);
     }
 }
+
 
 
 }
