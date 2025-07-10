@@ -22,37 +22,31 @@ public function upload(Request $request)
         ], 404);
     }
 
-    try {
-        if ($request->hasFile('video')) {
-            $path = $request->file('video')->store('videos');
+    if ($request->hasFile('video')) {
+        $path = $request->file('video')->store('videos');
 
-            $videoCall = VideoCall::create([
-                'video_meeting_id' => $videoMeeting->id,
-                'file_path'        => $path,
-                'status'           => 'uploaded',
-                'created_at'       => now(),
-                'updated_at'       => now(),
-            ]);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Upload successful!',
-                'path' => $path,
-                'data' => $videoCall,
-            ]);
-        }
+        $videoCall = VideoCall::create([
+            'video_meeting_id' => $videoMeeting->id,
+            'file_path'        => $path,
+            'status'           => 'uploaded',
+            'created_at'       => now(),
+            'updated_at'       => now(),
+        ]);
 
         return response()->json([
-            'success' => false,
-            'message' => 'No video uploaded.'
-        ], 400);
-    } catch (\Exception $e) {
-        return response()->json([
-            'success' => false,
-            'message' => 'Upload failed: ' . $e->getMessage(),
-        ], 500);
+            'success' => true,
+            'message' => 'Upload successful!',
+            'path' => $path,
+            'data' => $videoCall,
+        ]);
     }
+
+    return response()->json([
+        'success' => false,
+        'message' => 'No video uploaded.'
+    ], 400);
 }
+
 
 public function fetchVideoDetails($meetingToken)
 {
