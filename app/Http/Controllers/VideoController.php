@@ -36,7 +36,7 @@ public function upload(Request $request)
     $file = $request->file('video');
 
     if ($file) {
-        $path = $file->store('videos');
+        $path = $file->store('videos','public');
 
         $videoCall = VideoCall::create([
             'video_meeting_id' => $videoMeeting->id,
