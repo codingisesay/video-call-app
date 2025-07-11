@@ -14,7 +14,7 @@ let isCaller = false;
 let callStarted = false;
 let recording = false;
 let callEnded = false;
-let recordingStopped = false; // ✅ added flag
+let recordingStopped = false;
 
 let pipPos = { x: 420, y: 300 };
 let dragging = false;
@@ -163,7 +163,12 @@ function createPeerConnection() {
         callStarted = true;
         setStatus("Call connected");
         startPiPDrawing();
-        startRecording();
+
+        if (isCaller) {
+          startRecording();
+        } else {
+          console.log("Not recording because this peer is callee.");
+        }
       }
     } else if (["failed", "disconnected", "closed"].includes(peerConnection.connectionState)) {
       setStatus("Call disconnected");
@@ -225,7 +230,8 @@ function stopPiPDrawing() {
 function startRecording() {
   if (!callStarted) return;
   if (recording) return;
-  recordingStopped = false; // ✅ reset flag here
+
+  recordingStopped = false;
 
   setStatus("Recording...", true);
   recording = true;
@@ -242,7 +248,7 @@ function startRecording() {
     if (!recordingStopped) {
       const blob = new Blob(recordedChunks, { type: "video/webm" });
       uploadRecording(blob);
-      recordingStopped = true; // ✅ ensure upload happens only once
+      recordingStopped = true;
     }
   };
 
@@ -250,7 +256,7 @@ function startRecording() {
 }
 
 function stopRecording() {
-  if (recordingStopped) return; // ✅ guard to stop only once
+  if (recordingStopped) return;
 
   if (recorder && recording) {
     setStatus("Uploading...");
@@ -258,7 +264,7 @@ function stopRecording() {
     recording = false;
   }
 
-  recordingStopped = true; // ✅ set stopped
+  recordingStopped = true;
 }
 
 function uploadRecording(blob) {
