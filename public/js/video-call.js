@@ -14,6 +14,7 @@ let isCaller = false;
 let callStarted = false;
 let recording = false;
 let callEnded = false;
+let recordingStopped = false; // ✅ added flag
 
 let pipPos = { x: 420, y: 300 };
 let dragging = false;
@@ -224,6 +225,8 @@ function stopPiPDrawing() {
 function startRecording() {
   if (!callStarted) return;
   if (recording) return;
+  recordingStopped = false; // ✅ reset flag here
+
   setStatus("Recording...", true);
   recording = true;
   recordedChunks = [];
@@ -236,19 +239,26 @@ function startRecording() {
   };
 
   recorder.onstop = () => {
-    const blob = new Blob(recordedChunks, { type: "video/webm" });
-    uploadRecording(blob);
+    if (!recordingStopped) {
+      const blob = new Blob(recordedChunks, { type: "video/webm" });
+      uploadRecording(blob);
+      recordingStopped = true; // ✅ ensure upload happens only once
+    }
   };
 
   recorder.start();
 }
 
 function stopRecording() {
+  if (recordingStopped) return; // ✅ guard to stop only once
+
   if (recorder && recording) {
     setStatus("Uploading...");
     recorder.stop();
     recording = false;
   }
+
+  recordingStopped = true; // ✅ set stopped
 }
 
 function uploadRecording(blob) {
