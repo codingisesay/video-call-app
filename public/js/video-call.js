@@ -51,9 +51,16 @@ window.addEventListener("mouseup", () => {
   dragging = false;
 });
 
-document.getElementById("hangupBtn").onclick = hangup;
+document.addEventListener("DOMContentLoaded", function () {
+  const hangupBtn = document.getElementById("hangupBtn");
+  if (hangupBtn) {
+    console.log("✅ hangupBtn event listener attached");
+    hangupBtn.onclick = hangup;
+  } else {
+    console.warn("❌ hangupBtn not found");
+  }
+});
 
-// Add user gesture fallback for audio
 document.body.addEventListener("click", () => {
   if (remoteVideo) {
     remoteVideo.play().catch(e => console.error("Playback error:", e));
@@ -165,6 +172,7 @@ function createPeerConnection() {
         startPiPDrawing();
 
         if (isCaller) {
+          console.log("🎥 startRecording called");
           startRecording();
         } else {
           console.log("Not recording because this peer is callee.");
@@ -189,6 +197,7 @@ async function createAndSendOffer() {
 }
 
 function hangup() {
+  console.log("🟥 hangup() called");
   setStatus("Call Ended");
   callEnded = true;
   callStarted = false;
@@ -228,11 +237,10 @@ function stopPiPDrawing() {
 }
 
 function startRecording() {
-  if (!callStarted) return;
-  if (recording) return;
+  if (!callStarted || recording) return;
 
+  console.log("🎥 Starting recording...");
   recordingStopped = false;
-
   setStatus("Recording...", true);
   recording = true;
   recordedChunks = [];
@@ -245,29 +253,32 @@ function startRecording() {
   };
 
   recorder.onstop = () => {
-    if (!recordingStopped) {
-      const blob = new Blob(recordedChunks, { type: "video/webm" });
-      uploadRecording(blob);
-      recordingStopped = true;
-    }
+    console.log("🟨 recorder.onstop triggered");
+    const blob = new Blob(recordedChunks, { type: "video/webm" });
+    console.log("🟩 Blob size:", blob.size);
+    uploadRecording(blob);
+    recordingStopped = true;
   };
 
   recorder.start();
 }
 
 function stopRecording() {
+  console.log("🟧 stopRecording called");
+
   if (recordingStopped) return;
 
   if (recorder && recording) {
     setStatus("Uploading...");
-    recorder.stop();
+    recorder.stop(); // onstop will handle recordingStopped
     recording = false;
   }
-
-  recordingStopped = true;
+  // DO NOT set recordingStopped here — onstop will set it
 }
 
 function uploadRecording(blob) {
+  console.log("📤 uploadRecording called");
+
   const formData = new FormData();
   formData.append("video", blob, "call_recording.webm");
   formData.append("call_token", window.Laravel.callToken);
@@ -282,10 +293,10 @@ function uploadRecording(blob) {
     .then((res) => res.json())
     .then((data) => {
       setStatus("Upload successful!");
-      console.log("Upload complete:", data);
+      console.log("✅ Upload complete:", data);
     })
     .catch((err) => {
       setStatus("Upload error");
-      console.error(err);
+      console.error("❌ Upload failed:", err);
     });
 }
