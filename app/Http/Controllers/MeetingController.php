@@ -124,7 +124,7 @@ class MeetingController extends Controller
             'meeting' => $meeting,
         ])
     )
-    ->header('Content-Security-Policy', "frame-ancestors https://172.16.1.223:5174;")
+    ->header('Content-Security-Policy', "frame-ancestors https://172.16.1.224:9443;")
     ->header('X-Frame-Options', '');
 }
 
