@@ -259,8 +259,16 @@ function uploadRecording(blob) {
   formData.append("started_at", new Date().toISOString());
   formData.append("ended_at", new Date().toISOString());
 
+    if (!window.Laravel.jwtToken) {
+    console.error("JWT token not found. Cannot upload video.");
+    return;
+  }
+
   fetch(window.Laravel.apiUrl + "/upload-video", {
     method: "POST",
+      headers: {
+    "Authorization": "Bearer " + window.Laravel.jwtToken  // <-- Attach DAO's JWT here
+  },
     body: formData
   })
     .then((res) => res.json())

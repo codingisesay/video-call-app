@@ -6,13 +6,64 @@ use Illuminate\Http\Request;
 use App\Models\VideoCall;
 use App\Models\VideoMeeting;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Http; 
 
 class VideoController extends Controller
 {
+// public function upload(Request $request)
+// {
+
+//         // Increase PHP runtime limits
+//     ini_set('upload_max_filesize', '100M');
+//     ini_set('post_max_size', '100M');
+//     ini_set('max_execution_time', '300');
+//     ini_set('memory_limit', '512M');
+
+//     \Log::info('Incoming request fields:', $request->all());
+//     \Log::info('Incoming request files:', $request->allFiles());
+
+//     $meetingToken = $request->input('call_token');
+
+//     $videoMeeting = VideoMeeting::where('meeting_token', $meetingToken)->first();
+
+//     if (!$videoMeeting) {
+//         return response()->json([
+//             'success' => false,
+//             'message' => 'Invalid meeting token.'
+//         ], 404);
+//     }
+
+//     // Check if video is a file
+//     $file = $request->file('video');
+
+//     if ($file) {
+//         $path = $file->store('videos','public');
+
+//         $videoCall = VideoCall::create([
+//             'video_meeting_id' => $videoMeeting->id,
+//             'file_path'        => $path,
+//             'status'           => 'uploaded',
+//             'created_at'       => now(),
+//             'updated_at'       => now(),
+//         ]);
+
+//         return response()->json([
+//             'success' => true,
+//             'message' => 'Upload successful!',
+//             'path' => $path,
+//             'data' => $videoCall,
+//         ]);
+//     }
+
+//     return response()->json([
+//         'success' => false,
+//         'message' => 'No video uploaded.'
+//     ], 400);
+// }
+
+
 public function upload(Request $request)
 {
-
-        // Increase PHP runtime limits
     ini_set('upload_max_filesize', '100M');
     ini_set('post_max_size', '100M');
     ini_set('max_execution_time', '300');
@@ -22,7 +73,6 @@ public function upload(Request $request)
     \Log::info('Incoming request files:', $request->allFiles());
 
     $meetingToken = $request->input('call_token');
-
     $videoMeeting = VideoMeeting::where('meeting_token', $meetingToken)->first();
 
     if (!$videoMeeting) {
@@ -32,11 +82,10 @@ public function upload(Request $request)
         ], 404);
     }
 
-    // Check if video is a file
     $file = $request->file('video');
 
     if ($file) {
-        $path = $file->store('videos','public');
+        $path = $file->store('videos', 'public');
 
         $videoCall = VideoCall::create([
             'video_meeting_id' => $videoMeeting->id,
@@ -46,11 +95,37 @@ public function upload(Request $request)
             'updated_at'       => now(),
         ]);
 
+        // ✅ Extract JWT token from Authorization header
+        $jwtToken = $request->bearerToken();
+
+        // ✅ Construct full DAO API URL
+        $daoApiUrl = rtrim(env('DAO_API_URL'), '/') . '/dao/api/video-status-update';
+
+        try {
+            $daoResponse = Http::withHeaders([
+                'Authorization' => 'Bearer ' . $jwtToken,
+                'Accept' => 'application/json',
+            ])->post($daoApiUrl, [
+                'application_id' => $videoMeeting->application_id,
+                'status'         => 'Pending',
+                // 'file_path'      => $path,
+            ]);
+
+            \Log::info('DAO API Response:', [
+                'status' => $daoResponse->status(),
+                'body' => $daoResponse->body()
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Error sending update to DAO:', [
+                'message' => $e->getMessage()
+            ]);
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'Upload successful!',
-            'path' => $path,
-            'data' => $videoCall,
+            'path'    => $path,
+            'data'    => $videoCall,
         ]);
     }
 
