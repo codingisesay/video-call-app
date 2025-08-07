@@ -69,12 +69,12 @@ class MeetingController extends Controller
         $applicationId = $request->application_id;
         $kycApplicationId = $request->kyc_application_id;
 
-        if (!$applicationId && !$kycApplicationId) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Either application_id or kyc_application_id must be provided.',
-            ], 422);
-        }
+        // if (!$applicationId && !$kycApplicationId) {
+        //     return response()->json([
+        //         'success' => false,
+        //         'message' => 'Either application_id or kyc_application_id must be provided.',
+        //     ], 422);
+        // }
 
         $meeting = VideoMeeting::create([
             'project_name'       => 'DAO',
