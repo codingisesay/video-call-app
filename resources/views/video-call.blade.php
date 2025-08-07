@@ -142,12 +142,20 @@
     <div class="vc-footer">
         <span>Powered by Payvance DAO</span>
     </div>
-    <script>
+    {{-- <script>
         window.Laravel = {
             callToken: "{{ $meeting->meeting_token }}",
             apiUrl: "{{ url('/api') }}"
         }
-    </script>
+    </script> --}}
+
+    <script>
+    window.Laravel = {
+        callToken: "{{ $meeting->meeting_token }}",
+        apiUrl: "{{ url('/api') }}",
+        jwtToken: "{{ session('jwt_token') ?? request()->bearerToken() }}"
+    };
+</script>
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
     <script src="{{ asset('js/video-call.js') }}"></script>
 </body>
