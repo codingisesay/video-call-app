@@ -1,283 +1,254 @@
-const socket = io("https://vcall.payvance.co.in", {
-  path: "/socket.io",
-  transports: ["websocket"]
-});
+/* global io */
+(function () {
+  const socket = io("https://vcall.payvance.co.in", { path: "/socket.io", transports: ["websocket"] });
 
-let localStream;
-let peerConnection;
-let recorder;
-let recordedChunks = [];
-let mixedCanvas = document.getElementById("mixedCanvas");
-let ctx = mixedCanvas.getContext("2d");
-let mixAnimationId;
-let isCaller = false;
-let callStarted = false;
-let recording = false;
-let callEnded = false;
+  let localStream, peerConnection, recorder;
+  const mixedCanvas = document.getElementById("mixedCanvas");
+  const ctx = mixedCanvas.getContext("2d");
+  let mixAnimationId;
 
-let pipPos = { x: 420, y: 300 };
-let dragging = false;
-let dragOffset = { x: 0, y: 0 };
+  let isCaller = false;
+  let callStarted = false;
+  let recording = false;
+  let callEnded = false;
+  let finalized = false;
 
-const localVideo = document.getElementById("localVideo");
-const remoteVideo = document.getElementById("remoteVideo");
-const statusBadge = document.getElementById("statusBadge");
+  const pipPos = { x: 420, y: 300 };
+  let dragging = false, dragOffset = { x: 0, y: 0 };
 
-function setStatus(text, isRecording = false) {
-  statusBadge.textContent = text;
-  if (isRecording) statusBadge.classList.add("recording");
-  else statusBadge.classList.remove("recording");
-}
+  const localVideo = document.getElementById("localVideo");
+  const remoteVideo = document.getElementById("remoteVideo");
+  const statusBadge = document.getElementById("statusBadge");
+  const hangupBtn = document.getElementById("hangupBtn");
 
-function updatePipPosition() {
-  localVideo.style.left = pipPos.x + "px";
-  localVideo.style.top = pipPos.y + "px";
-}
+  // === Chunked upload state ===
+  const API = (window.Laravel && window.Laravel.apiUrl) || "/api";
+  const UPLOAD_ID = (window.Laravel && window.Laravel.callToken) || null; // meeting_token OR self-kyc upload_id
+  let seq = 0;
 
-localVideo.addEventListener("mousedown", (e) => {
-  dragging = true;
-  dragOffset.x = e.clientX - pipPos.x;
-  dragOffset.y = e.clientY - pipPos.y;
-});
-window.addEventListener("mousemove", (e) => {
-  if (dragging) {
+  function setStatus(text, isRecording = false) {
+    statusBadge.textContent = text;
+    statusBadge.classList.toggle("recording", isRecording);
+  }
+
+  function updatePipPosition() {
+    localVideo.style.left = pipPos.x + "px";
+    localVideo.style.top  = pipPos.y + "px";
+  }
+
+  // Drag local PiP
+  localVideo.addEventListener("mousedown", (e) => {
+    dragging = true;
+    dragOffset.x = e.clientX - pipPos.x;
+    dragOffset.y = e.clientY - pipPos.y;
+    localVideo.style.cursor = "grabbing";
+  });
+  window.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
     pipPos.x = Math.max(0, Math.min(640 - 160, e.clientX - dragOffset.x));
     pipPos.y = Math.max(0, Math.min(480 - 120, e.clientY - dragOffset.y));
     updatePipPosition();
-  }
-});
-window.addEventListener("mouseup", () => {
-  dragging = false;
-});
-
-document.getElementById("hangupBtn").onclick = hangup;
-
-// Add user gesture fallback for audio
-document.body.addEventListener("click", () => {
-  if (remoteVideo) {
-    remoteVideo.play().catch(e => console.error("Playback error:", e));
-  }
-});
-
-start();
-
-async function start() {
-  setStatus("Initializing camera...");
-  try {
-    localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-    localVideo.srcObject = localStream;
-    localVideo.muted = true;
-
-    socket.emit("joinRoom", window.Laravel.callToken);
-    setStatus("Waiting for peer...");
-  } catch (err) {
-    setStatus("Camera/Mic error: " + err.message);
-    alert(err.message);
-  }
-}
-
-socket.on("joinedRoom", (data) => {
-  console.log("joinedRoom", data);
-  isCaller = data.isCaller;
-  if (isCaller) {
-    createPeerConnection();
-    createAndSendOffer();
-  }
-});
-
-socket.on("peer-joined", () => {
-  console.log("peer-joined received");
-  if (isCaller && peerConnection) {
-    console.log("Sending offer because peer joined...");
-    createAndSendOffer();
-  }
-});
-
-socket.on("offer", async (offer) => {
-  console.log("Received offer");
-  if (!peerConnection) createPeerConnection();
-  await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-  const answer = await peerConnection.createAnswer();
-  await peerConnection.setLocalDescription(answer);
-  socket.emit("answer", {
-    roomId: window.Laravel.callToken,
-    answer: answer
   });
-});
+  window.addEventListener("mouseup", () => { dragging = false; localVideo.style.cursor = "grab"; });
 
-socket.on("answer", async (answer) => {
-  console.log("Received answer");
-  await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
-});
+  // Buttons
+  if (hangupBtn) hangupBtn.onclick = hangup;
 
-socket.on("ice-candidate", async (candidate) => {
-  console.log("Received ICE candidate");
-  if (candidate && peerConnection) {
+  // Unmute remote due to user gesture requirement on some browsers
+  document.body.addEventListener("click", () => remoteVideo?.play().catch(() => {}));
+
+  // Start
+  start().catch(err => { setStatus("Init error: " + err.message); });
+
+  async function start() {
+    setStatus("Initializing camera...");
     try {
-      await peerConnection.addIceCandidate(candidate);
-      console.log("Added ICE candidate");
-    } catch (err) {
-      console.error("Error adding ICE:", err);
-    }
-  }
-});
+      localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      localVideo.srcObject = localStream;
+      localVideo.muted = true;
+      updatePipPosition();
 
-function createPeerConnection() {
-  peerConnection = new RTCPeerConnection({
-    iceServers: [
-      { urls: "stun:stun.l.google.com:19302" }
-    ]
-  });
-
-  localStream.getTracks().forEach((track) => {
-    peerConnection.addTrack(track, localStream);
-  });
-
-  peerConnection.onicecandidate = (e) => {
-    if (e.candidate) {
-      socket.emit("ice-candidate", {
-        roomId: window.Laravel.callToken,
-        candidate: e.candidate
-      });
-    }
-  };
-
-  peerConnection.ontrack = (e) => {
-    console.log("Received remote track");
-    remoteVideo.srcObject = e.streams[0];
-    remoteVideo.muted = false;
-    remoteVideo.volume = 1.0;
-
-    remoteVideo.play().catch(err => {
-      console.error("Remote video playback error:", err);
-    });
-
-    console.log("Remote audio tracks:", e.streams[0].getAudioTracks());
-  };
-
-  peerConnection.onconnectionstatechange = () => {
-    console.log("Peer connection state:", peerConnection.connectionState);
-    if (peerConnection.connectionState === "connected") {
-      if (!callStarted) {
-        callStarted = true;
-        setStatus("Call connected");
-        startPiPDrawing();
-        startRecording();
+      if (!UPLOAD_ID) {
+        console.warn("No callToken/upload_id set on page; WebRTC may still work, but uploads will fail.");
       }
-    } else if (["failed", "disconnected", "closed"].includes(peerConnection.connectionState)) {
-      setStatus("Call disconnected");
-      stopPiPDrawing();
-      stopRecording();
-    }
-  };
-}
 
-async function createAndSendOffer() {
-  console.log("Creating and sending offer...");
-  const offer = await peerConnection.createOffer();
-  await peerConnection.setLocalDescription(offer);
-  socket.emit("offer", {
-    roomId: window.Laravel.callToken,
-    offer: offer
+      socket.emit("joinRoom", UPLOAD_ID);
+      setStatus("Waiting for peer...");
+    } catch (err) {
+      setStatus("Camera/Mic error: " + err.message);
+      alert(err.message);
+      throw err;
+    }
+  }
+
+  // Socket events (signaling)
+  socket.on("joinedRoom", (data) => {
+    isCaller = !!data.isCaller;
+    createPeerConnection();
+    if (isCaller) createAndSendOffer();
   });
-}
 
-function hangup() {
-  setStatus("Call Ended");
-  callEnded = true;
-  callStarted = false;
+  socket.on("peer-joined", () => {
+    if (isCaller && peerConnection) createAndSendOffer();
+  });
 
-  if (peerConnection) peerConnection.close();
+  socket.on("offer", async (offer) => {
+    if (!peerConnection) createPeerConnection();
+    await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+    const answer = await peerConnection.createAnswer();
+    await peerConnection.setLocalDescription(answer);
+    socket.emit("answer", { roomId: UPLOAD_ID, answer });
+  });
 
-  if (localStream) {
-    localStream.getTracks().forEach((t) => t.stop());
+  socket.on("answer", async (answer) => {
+    await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+  });
+
+  socket.on("ice-candidate", async (candidate) => {
+    if (candidate && peerConnection) {
+      try { await peerConnection.addIceCandidate(candidate); } catch (err) { console.error("ICE error:", err); }
+    }
+  });
+
+  function createPeerConnection() {
+    peerConnection = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+    localStream.getTracks().forEach(t => peerConnection.addTrack(t, localStream));
+
+    peerConnection.onicecandidate = (e) => {
+      if (e.candidate) socket.emit("ice-candidate", { roomId: UPLOAD_ID, candidate: e.candidate });
+    };
+
+    peerConnection.ontrack = (e) => {
+      remoteVideo.srcObject = e.streams[0];
+      remoteVideo.muted = false;
+      remoteVideo.volume = 1.0;
+      remoteVideo.play().catch(() => {});
+    };
+
+    peerConnection.onconnectionstatechange = () => {
+      const st = peerConnection.connectionState;
+      if (st === "connected") {
+        if (!callStarted) {
+          callStarted = true;
+          setStatus("Call connected");
+
+          // ✅ Agent-only: only record+upload if we ARE the caller AND we have a JWT
+          if (isCaller && window.Laravel?.jwtToken) {
+            startPiPDrawing();
+            startChunkedRecording();
+          } else {
+            console.log("Viewer-only mode (not caller or missing JWT) — no upload.");
+          }
+        }
+      } else if (["failed", "disconnected", "closed"].includes(st)) {
+        setStatus("Call disconnected");
+        stopPiPDrawing();
+        stopRecording();
+      }
+    };
+  }
+
+  async function createAndSendOffer() {
+    const offer = await peerConnection.createOffer();
+    await peerConnection.setLocalDescription(offer);
+    socket.emit("offer", { roomId: UPLOAD_ID, offer });
+  }
+
+  function hangup() {
+    setStatus("Call Ended");
+    callEnded = true; callStarted = false;
+    try { peerConnection?.close(); } catch (e) {}
+    localStream?.getTracks().forEach(t => t.stop());
     localVideo.srcObject = null;
-  }
-  if (remoteVideo.srcObject) {
-    remoteVideo.srcObject.getTracks?.().forEach((t) => t.stop());
+    remoteVideo.srcObject?.getTracks?.().forEach(t => t.stop());
     remoteVideo.srcObject = null;
+    stopPiPDrawing();
+    stopRecording();
   }
-  stopPiPDrawing();
-  stopRecording();
-}
 
-function startPiPDrawing() {
-  mixedCanvas.width = 640;
-  mixedCanvas.height = 480;
-  function draw() {
-    ctx.clearRect(0, 0, 640, 480);
-    if (remoteVideo.readyState >= 2) {
-      ctx.drawImage(remoteVideo, 0, 0, 640, 480);
+  function startPiPDrawing() {
+    mixedCanvas.width = 640; mixedCanvas.height = 480;
+    function draw() {
+      ctx.clearRect(0, 0, 640, 480);
+      if (remoteVideo.readyState >= 2) ctx.drawImage(remoteVideo, 0, 0, 640, 480);
+      if (localVideo.readyState >= 2) ctx.drawImage(localVideo, pipPos.x, pipPos.y, 160, 120);
+      if (!callEnded) mixAnimationId = requestAnimationFrame(draw);
     }
-    if (localVideo.readyState >= 2) {
-      ctx.drawImage(localVideo, pipPos.x, pipPos.y, 160, 120);
+    draw();
+  }
+  function stopPiPDrawing() { cancelAnimationFrame(mixAnimationId); }
+
+  // === Chunked recording/upload ===
+  function startChunkedRecording() {
+    if (!callStarted || recording) return;
+    if (!window.Laravel?.jwtToken) { console.warn("No JWT; skipping recording."); return; }
+
+    setStatus("Recording...", true);
+    recording = true;
+
+    const stream = mixedCanvas.captureStream(30);
+    recorder = new MediaRecorder(stream, { mimeType: "video/webm" });
+
+    recorder.ondataavailable = async (e) => {
+      if (!e.data || !e.data.size) return;
+      const fd = new FormData();
+      fd.append("upload_id", UPLOAD_ID);
+      fd.append("seq", String(seq));
+      fd.append("chunk", e.data, `part_${seq}.webm`);
+      seq++;
+
+      try {
+        const res = await fetch(API + "/upload-chunk", {
+          method: "POST",
+          headers: { "Authorization": "Bearer " + window.Laravel.jwtToken },
+          body: fd
+        });
+        if (!res.ok) {
+          console.error("Chunk upload failed", res.status, await res.text());
+        }
+      } catch (err) {
+        console.error("Chunk upload error", err);
+      }
+    };
+
+    recorder.start(5000); // emit every 5 seconds
+  }
+
+  async function finalizeUpload() {
+    if (finalized) return;
+    finalized = true;
+
+    if (!window.Laravel?.jwtToken) { // viewer-only or customer — do nothing
+      console.log("No JWT — finalize skipped.");
+      return;
     }
-    if (!callEnded) mixAnimationId = requestAnimationFrame(draw);
-  }
-  draw();
-}
 
-function stopPiPDrawing() {
-  cancelAnimationFrame(mixAnimationId);
-}
-
-function startRecording() {
-  if (!callStarted) return;
-  if (recording) return;
-  setStatus("Recording...", true);
-  recording = true;
-  recordedChunks = [];
-
-  const stream = mixedCanvas.captureStream(30);
-  recorder = new MediaRecorder(stream, { mimeType: "video/webm" });
-
-  recorder.ondataavailable = (e) => {
-    if (e.data.size > 0) recordedChunks.push(e.data);
-  };
-
-  recorder.onstop = () => {
-    const blob = new Blob(recordedChunks, { type: "video/webm" });
-    uploadRecording(blob);
-  };
-
-  recorder.start();
-}
-
-function stopRecording() {
-  if (recorder && recording) {
-    setStatus("Uploading...");
-    recorder.stop();
-    recording = false;
-  }
-}
-
-function uploadRecording(blob) {
-  const formData = new FormData();
-  formData.append("video", blob, "call_recording.webm");
-  formData.append("call_token", window.Laravel.callToken);
-  formData.append("duration", 120);
-  formData.append("started_at", new Date().toISOString());
-  formData.append("ended_at", new Date().toISOString());
-
-    if (!window.Laravel.jwtToken) {
-    console.error("JWT token not found. Cannot upload video.");
-    return;
-  }
-
-  fetch(window.Laravel.apiUrl + "/upload-video", {
-    method: "POST",
-      headers: {
-    "Authorization": "Bearer " + window.Laravel.jwtToken  // <-- Attach DAO's JWT here
-  },
-    body: formData
-  })
-    .then((res) => res.json())
-    .then((data) => {
-      setStatus("Upload successful!");
-      console.log("Upload complete:", data);
-    })
-    .catch((err) => {
-      setStatus("Upload error");
+    try {
+      const res = await fetch(API + "/finalize-upload", {
+        method: "POST",
+        headers: {
+          "Authorization": "Bearer " + window.Laravel.jwtToken,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ upload_id: UPLOAD_ID, total_parts: seq })
+      });
+      const body = await res.text();
+      if (!res.ok) throw new Error(`Finalize failed: ${res.status} ${body}`);
+      console.log("Finalize ok:", body);
+      setStatus("Upload complete!");
+    } catch (err) {
       console.error(err);
-    });
-}
+      setStatus("Upload error");
+    }
+  }
+
+  function stopRecording() {
+    if (recorder && recording) {
+      try { recorder.stop(); } catch (e) {}
+      recording = false;
+    }
+    finalizeUpload();
+  }
+
+  window.addEventListener("beforeunload", finalizeUpload);
+})();
