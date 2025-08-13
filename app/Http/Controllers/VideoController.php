@@ -336,41 +336,109 @@ class VideoController extends Controller
         ]);
     }
 
+    // public function retakeSelfKyc(Request $request)
+    // {
+    //     $request->validate(['upload_id' => 'required|string']);
+    //     $meeting = VideoMeeting::where('meeting_token', $request->upload_id)->first();
+    //     if (!$meeting) return response()->json(['success' => false, 'message' => 'Invalid upload_id'], 404);
+
+    //     return DB::transaction(function () use ($meeting) {
+    //         $videoCall = VideoCall::where('video_meeting_id', $meeting->id)->first();
+    //         if ($videoCall) {
+    //             if ($videoCall->file_path) {
+    //                 try { Storage::disk('public')->delete($videoCall->file_path); } catch (\Throwable $e) {
+    //                     Log::warning('Retake: failed to remove file', ['meeting_id' => $meeting->id, 'err' => $e->getMessage()]);
+    //                 }
+    //             }
+    //             $videoCall->delete();
+    //         }
+
+    //         $partsDir = storage_path("app/recordings/{$meeting->id}/parts");
+    //         $listFile = storage_path("app/recordings/{$meeting->id}/list.txt");
+    //         try { if (file_exists($listFile)) @unlink($listFile); $this->rrmdir($partsDir); } catch (\Throwable $e) {
+    //             Log::warning('Retake: cleanup parts failed', ['err' => $e->getMessage()]);
+    //         }
+
+    //         if ($this->hasFinalFlag()) $meeting->recording_uploaded = 0;
+    //         $meeting->status = 'active';
+    //         $meeting->save();
+
+    //         return response()->json([
+    //             'success'    => true,
+    //             'message'    => 'Retake ready. Old recording and parts deleted.',
+    //             'upload_id'  => $meeting->meeting_token,
+    //             'meeting_id' => $meeting->id,
+    //         ]);
+    //     });
+    // }
+
     public function retakeSelfKyc(Request $request)
-    {
-        $request->validate(['upload_id' => 'required|string']);
-        $meeting = VideoMeeting::where('meeting_token', $request->upload_id)->first();
-        if (!$meeting) return response()->json(['success' => false, 'message' => 'Invalid upload_id'], 404);
+{
+    // Accept any of these keys; require at least one
+    $request->validate([
+        'upload_id'         => 'nullable|string',
+        'kyc_application_id'=> 'nullable|string',
+        'application_id'    => 'nullable|string',
+    ]);
 
-        return DB::transaction(function () use ($meeting) {
-            $videoCall = VideoCall::where('video_meeting_id', $meeting->id)->first();
-            if ($videoCall) {
-                if ($videoCall->file_path) {
-                    try { Storage::disk('public')->delete($videoCall->file_path); } catch (\Throwable $e) {
-                        Log::warning('Retake: failed to remove file', ['meeting_id' => $meeting->id, 'err' => $e->getMessage()]);
-                    }
-                }
-                $videoCall->delete();
-            }
-
-            $partsDir = storage_path("app/recordings/{$meeting->id}/parts");
-            $listFile = storage_path("app/recordings/{$meeting->id}/list.txt");
-            try { if (file_exists($listFile)) @unlink($listFile); $this->rrmdir($partsDir); } catch (\Throwable $e) {
-                Log::warning('Retake: cleanup parts failed', ['err' => $e->getMessage()]);
-            }
-
-            if ($this->hasFinalFlag()) $meeting->recording_uploaded = 0;
-            $meeting->status = 'active';
-            $meeting->save();
-
-            return response()->json([
-                'success'    => true,
-                'message'    => 'Retake ready. Old recording and parts deleted.',
-                'upload_id'  => $meeting->meeting_token,
-                'meeting_id' => $meeting->id,
-            ]);
-        });
+    if (!$request->upload_id && !$request->kyc_application_id && !$request->application_id) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Provide upload_id (meeting_token) OR kyc_application_id OR application_id.'
+        ], 422);
     }
+
+    // Resolve the meeting
+    $meeting = null;
+    if ($request->upload_id) {
+        $meeting = VideoMeeting::where('meeting_token', $request->upload_id)->first();
+    } elseif ($request->kyc_application_id) {
+        $meeting = VideoMeeting::where('kyc_application_id', $request->kyc_application_id)->latest('id')->first();
+    } else { // application_id
+        $meeting = VideoMeeting::where('application_id', $request->application_id)->latest('id')->first();
+    }
+
+    if (!$meeting) {
+        return response()->json(['success' => false, 'message' => 'No matching self-KYC session found.'], 404);
+    }
+
+    return DB::transaction(function () use ($meeting) {
+        // Delete any finalized record
+        $videoCall = VideoCall::where('video_meeting_id', $meeting->id)->first();
+        if ($videoCall) {
+            if ($videoCall->file_path) {
+                try { Storage::disk('public')->delete($videoCall->file_path); } catch (\Throwable $e) {
+                    Log::warning('Retake: failed to remove file', ['meeting_id' => $meeting->id, 'err' => $e->getMessage()]);
+                }
+            }
+            $videoCall->delete();
+        }
+
+        // Clear any partial chunks
+        $partsDir = storage_path("app/recordings/{$meeting->id}/parts");
+        $listFile = storage_path("app/recordings/{$meeting->id}/list.txt");
+        try {
+            if (file_exists($listFile)) @unlink($listFile);
+            if (is_dir($partsDir)) $this->rrmdir($partsDir);
+        } catch (\Throwable $e) {
+            Log::warning('Retake: cleanup parts failed', ['err' => $e->getMessage()]);
+        }
+
+        // Reset flags
+        if ($this->hasFinalFlag()) $meeting->recording_uploaded = 0;
+        $meeting->status = 'active';
+        $meeting->save();
+
+        // Return same upload_id (meeting_token) to reuse on frontend
+        return response()->json([
+            'success'    => true,
+            'message'    => 'Retake ready. Old recording and parts deleted.',
+            'upload_id'  => $meeting->meeting_token,
+            'meeting_id' => $meeting->id,
+        ]);
+    });
+}
+
 
     // ========= Helpers =========
 
@@ -449,4 +517,102 @@ private function authorizeAgent(Request $request, VideoMeeting $meeting)
             Log::error('DAO notify error: ' . $e->getMessage());
         }
     }
+
+
+public function fetchVideoDetailsByApplicationOrKyc(Request $request)
+{
+    try {
+        // 1) Validate: require at least one of the two
+        $request->validate([
+            'application_id'     => 'nullable|string',
+            'kyc_application_id' => 'nullable|string',
+            'latest_only'        => 'sometimes|boolean',
+        ]);
+
+        $applicationId     = $request->input('application_id');
+        $kycApplicationId  = $request->input('kyc_application_id');
+        $latestOnly        = (bool) $request->boolean('latest_only', false);
+
+        if (!$applicationId && !$kycApplicationId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Either application_id or kyc_application_id must be provided.',
+            ], 422);
+        }
+
+        // 2) Build query
+        $query = VideoCall::query()
+            ->join('video_meetings', 'video_calls.video_meeting_id', '=', 'video_meetings.id')
+            ->select([
+                'video_calls.id',
+                'video_calls.video_meeting_id',
+                'video_calls.file_path',
+                'video_calls.status',
+                'video_calls.created_at as video_created_at',
+                'video_calls.updated_at as video_updated_at',
+                'video_meetings.project_name',
+                'video_meetings.customer_name',
+                'video_meetings.customer_email',
+                'video_meetings.meeting_token',
+                'video_meetings.application_id',
+                'video_meetings.kyc_application_id',
+                'video_meetings.expires_at',
+                'video_meetings.status as meeting_status',
+            ]);
+
+        if ($applicationId) {
+            $query->where('video_meetings.application_id', $applicationId);
+        }
+        if ($kycApplicationId) {
+            $query->where('video_meetings.kyc_application_id', $kycApplicationId);
+        }
+
+        // Order newest first; optionally limit to the latest one
+        $query->orderByDesc('video_calls.id');
+
+        if ($latestOnly) {
+            $row = $query->first();
+            if (!$row) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No video call found for the given identifier(s).',
+                ], 404);
+            }
+
+            // Attach a public URL if file exists
+            $row->public_url = $row->file_path ? Storage::disk('public')->url($row->file_path) : null;
+
+            return response()->json([
+                'success' => true,
+                'data'    => $row,
+            ]);
+        }
+
+        $rows = $query->get();
+        if ($rows->isEmpty()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No video call found for the given identifier(s).',
+            ], 404);
+        }
+
+        // Map public URLs for each record
+        $rows->transform(function ($r) {
+            $r->public_url = $r->file_path ? Storage::disk('public')->url($r->file_path) : null;
+            return $r;
+        });
+
+        return response()->json([
+            'success' => true,
+            'count'   => $rows->count(),
+            'data'    => $rows,
+        ]);
+    } catch (\Throwable $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to fetch video details: ' . $e->getMessage(),
+        ], 500);
+    }
+}
+
 }
