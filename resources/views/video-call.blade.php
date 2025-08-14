@@ -96,24 +96,43 @@
     <span>Powered by Payvance DAO</span>
   </div>
 
-  <!-- App context -->
-  <script>
-    window.Laravel = {
-      callToken: @json($meeting->meeting_token),
-      apiUrl: @json(url('/api')),
-      // Agent pages can inject/store JWT; customer pages normally won't have it.
-      jwtToken: @json(session('jwt_token') ?? null),
-    };
-    // Fallback: try to read token stored by your app (optional, but handy for agents)
-    (function ensureJwt(){
-      try {
-        if (!window.Laravel.jwtToken) {
-          const t = localStorage.getItem('dao_jwt') || sessionStorage.getItem('dao_jwt');
-          if (t) window.Laravel.jwtToken = t;
-        }
-      } catch(e){}
-    })();
-  </script>
+ <script>
+  // existing block that sets window.Laravel.callToken/apiUrl/jwtToken
+  window.Laravel = {
+    callToken: @json($meeting->meeting_token),
+    apiUrl: @json(url('/api')),
+    jwtToken: @json(session('jwt_token') ?? null),
+  };
+
+  // also try localStorage/sessionStorage fallback
+  (function ensureJwt(){
+    try {
+      if (!window.Laravel.jwtToken) {
+        const t = localStorage.getItem('dao_jwt') || sessionStorage.getItem('dao_jwt');
+        if (t) window.Laravel.jwtToken = t;
+      }
+    } catch(e){}
+  })();
+
+  // NEW: receive JWT via postMessage from DAO app
+  (function setupJwtPostMessage(){
+    window.addEventListener('message', (evt) => {
+      // Accept messages only from your DAO origin(s)
+      const allowed = [
+        'https://dao.payvance.co.in:8091',      // your DAO app origin (adjust if different)
+        'https://your-dao-frontend.example',    // add any other allowed origins if needed
+      ];
+      if (!allowed.includes(evt.origin)) return;
+
+      const msg = evt.data;
+      if (msg && msg.type === 'DAO_JWT' && typeof msg.token === 'string' && msg.token.length > 20) {
+        window.Laravel.jwtToken = msg.token;
+        try { localStorage.setItem('dao_jwt', msg.token); } catch(e) {}
+        console.log('JWT received via postMessage');
+      }
+    });
+  })();
+</script>
 
   <!-- Socket.io then your JS -->
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
