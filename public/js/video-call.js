@@ -17,7 +17,12 @@
   // ========= App / API context =========
   const API = (window.Laravel && window.Laravel.apiUrl) || "/api";
   const UPLOAD_ID = (window.Laravel && window.Laravel.callToken) || null; // meeting_token or self-kyc upload_id
-  const JWT = (window.Laravel && window.Laravel.jwtToken) || null;         // agent token (optional)
+  // const JWT = (window.Laravel && window.Laravel.jwtToken) || null;         // agent token (optional)
+  function getJWT() {
+  return (window.Laravel && window.Laravel.jwtToken) || null; // agent token (may arrive later)
+}
+
+
 
   // ========= State =========
   let localStream = null;
@@ -34,6 +39,28 @@
   let recording = false;
   let finalized = false;
   let seq = 0; // chunk sequence counter
+
+
+  // Accept JWT via postMessage from DAO and kick off recording if ready
+window.addEventListener('message', (evt) => {
+  const allowed = [
+    'https://dao.payvance.co.in',
+    'https://dao.payvance.co.in:8091',
+  ];
+  if (!allowed.includes(evt.origin)) return;
+
+  const msg = evt.data;
+  if (msg && msg.type === 'DAO_JWT' && typeof msg.token === 'string' && msg.token.length > 20) {
+    window.Laravel = window.Laravel || {};
+    window.Laravel.jwtToken = msg.token;
+    console.log('[vcall] JWT received via postMessage');
+
+    // If peer is already connected and we weren’t recording, start now
+    if (peerConnection && peerConnection.connectionState === 'connected' && !recording) {
+      startChunkedRecording();
+    }
+  }
+});
 
   // PiP drag for local preview
   const pipPos = { x: 420, y: 300 };
@@ -213,9 +240,9 @@
           // Start visual mixer
           startPiPDrawing();
 
-          // Record+upload only if JWT present (agent)
-          if (JWT) startChunkedRecording();
-          else console.log("Viewer mode (no JWT) — not recording or uploading.");
+         // Record+upload only if JWT present (agent)
+if (getJWT()) startChunkedRecording();
+else console.log("Viewer mode (no JWT) — not recording or uploading.");
         }
       } else if (["failed", "disconnected", "closed"].includes(st)) {
         setStatus("Call disconnected");
@@ -258,7 +285,7 @@
   // ========= Recording (chunked) =========
   function startChunkedRecording() {
     if (recording || !callStarted) return;
-    if (!JWT) { console.warn("No JWT; skipping recording."); return; }
+    if (!getJWT()) { console.warn("No JWT; skipping recording."); return; }
 
     setStatus("Recording...", true);
     recording = true;
@@ -290,7 +317,7 @@
       try {
         const res = await fetch(API + "/upload-chunk", {
           method: "POST",
-          headers: { Authorization: "Bearer " + JWT },
+          headers: { Authorization: "Bearer " + getJWT() },
           body: fd,
         });
         if (!res.ok) {
@@ -310,14 +337,14 @@
     if (finalized) return;
     finalized = true;
 
-    if (!JWT) { console.log("No JWT — finalize skipped."); return; }
+    if (!getJWT()) { console.log("No JWT — finalize skipped."); return; }
     if (!UPLOAD_ID) { console.warn("No upload_id/callToken on page — cannot finalize."); return; }
 
     try {
       const res = await fetch(API + "/finalize-upload", {
         method: "POST",
         headers: {
-          Authorization: "Bearer " + JWT,
+          Authorization: "Bearer " + getJWT(),
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ upload_id: UPLOAD_ID, total_parts: seq }),
