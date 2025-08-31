@@ -1,12 +1,16 @@
 /* global io */
 (function () {
-  // ========= Socket.io (signaling) =========
+  // =========================
+  // Socket.io (signaling)
+  // =========================
   const socket = io("https://vcall.payvance.co.in", {
     path: "/socket.io",
     transports: ["websocket"],
   });
 
-  // ========= DOM refs =========
+  // =========================
+  // DOM refs
+  // =========================
   const mixedCanvas = document.getElementById("mixedCanvas");
   const ctx = mixedCanvas.getContext("2d");
   const localVideo = document.getElementById("localVideo");
@@ -14,34 +18,45 @@
   const statusBadge = document.getElementById("statusBadge");
   const hangupBtn = document.getElementById("hangupBtn");
 
-  // ========= App / API context =========
+  // =========================
+  // App / API context
+  // - Laravel view should set window.Laravel.callToken + apiUrl
+  // - jwt may arrive later (postMessage) or via URL (?token=)
+  // =========================
   const API = (window.Laravel && window.Laravel.apiUrl) || "/api";
-  const UPLOAD_ID = (window.Laravel && window.Laravel.callToken) || null; // meeting_token or self-kyc upload_id
+  const UPLOAD_ID = (window.Laravel && window.Laravel.callToken) || null;
+
+  // read JWT from multiple places, preferring latest
+  function initJWTFromUrlOrStorage() {
+    try {
+      const url = new URL(window.location.href);
+      const t = url.searchParams.get("token");
+      if (t && t.length > 20) {
+        window.Laravel = window.Laravel || {};
+        window.Laravel.jwtToken = t;
+        try { localStorage.setItem("dao_jwt", t); } catch (_) {}
+      } else if (!((window.Laravel && window.Laravel.jwtToken))) {
+        const ls = localStorage.getItem("dao_jwt");
+        const ss = sessionStorage.getItem("dao_jwt");
+        if (ls && ls.length > 20) {
+          window.Laravel = window.Laravel || {};
+          window.Laravel.jwtToken = ls;
+        } else if (ss && ss.length > 20) {
+          window.Laravel = window.Laravel || {};
+          window.Laravel.jwtToken = ss;
+        }
+      }
+    } catch (_) {}
+  }
+  initJWTFromUrlOrStorage();
+
   function getJWT() {
-    return (window.Laravel && window.Laravel.jwtToken) || null; // may arrive later
+    return (window.Laravel && window.Laravel.jwtToken) || null;
   }
 
-  // ========= State =========
-  let localStream = null;
-  let remoteStream = null;
-  let peerConnection = null;
-
-  // Canvas mixing loop
-  let mixAnimationId = null;
-  let callStarted = false;
-  let callEnded = false;
-
-  // Recording/chunks
-  let recorder = null;
-  let recording = false;
-  let finalized = false;
-  let seq = 0; // chunk sequence counter
-
-  // Debounce timers for network blips
-  let dcTimer = null;      // "disconnected" grace timer
-  let failedTimer = null;  // "failed" grace timer
-
-  // ========= Accept JWT via postMessage =========
+  // =========================
+  // Accept JWT via postMessage from DAO
+  // =========================
   window.addEventListener("message", (evt) => {
     const allowed = [
       "https://dao.payvance.co.in",
@@ -56,21 +71,50 @@
     if (msg && msg.type === "DAO_JWT" && typeof msg.token === "string" && msg.token.length > 20) {
       window.Laravel = window.Laravel || {};
       window.Laravel.jwtToken = msg.token;
+      try { localStorage.setItem("dao_jwt", msg.token); } catch (_) {}
       console.log("[vcall] JWT received via postMessage");
 
-      // If peer is already connected and we weren’t recording, start now
-      if (peerConnection && ["connected", "completed"].includes(peerConnection.iceConnectionState) && !recording) {
+      // If already connected and not recording yet, start now
+      if (peerConnection && callStarted && !recording && getJWT()) {
         startChunkedRecording();
       }
     }
   });
+
+  // =========================
+  // State
+  // =========================
+  let localStream = null;
+  let remoteStream = null;
+  let peerConnection = null;
+
+  // attach-once controls for remote video
+  let remoteAttached = false;
+  let remotePlayTried = false;
+
+  // Canvas loop
+  let mixAnimationId = null;
+  let callStarted = false;
+  let callEnded = false;
+
+  // Recording/chunks
+  let recorder = null;
+  let recording = false;
+  let finalized = false;
+  let seq = 0;
+
+  // Grace timers (ICE)
+  let dcTimer = null;
+  let failedTimer = null;
 
   // PiP drag for local preview
   const pipPos = { x: 420, y: 300 };
   let dragging = false;
   let dragOffset = { x: 0, y: 0 };
 
-  // ========= UI helpers =========
+  // =========================
+  // UI helpers
+  // =========================
   function setStatus(text, isRecording = false) {
     if (!statusBadge) return;
     statusBadge.textContent = text;
@@ -85,18 +129,19 @@
   // Drag handlers
   localVideo.addEventListener("mousedown", (e) => {
     dragging = true;
-    dragOffset.x = e.clientX - pipPos.x;
-    dragOffset.y = e.clientY - pipPos.y;
+    // convert page coords to container-relative; keep simple bounds
+    const rect = localVideo.getBoundingClientRect();
+    dragOffset.x = e.clientX - rect.left;
+    dragOffset.y = e.clientY - rect.top;
   });
   window.addEventListener("mousemove", (e) => {
     if (!dragging) return;
+    // canvas size 640x480, PiP size 160x120
     pipPos.x = Math.max(0, Math.min(640 - 160, e.clientX - dragOffset.x));
     pipPos.y = Math.max(0, Math.min(480 - 120, e.clientY - dragOffset.y));
     updatePipPosition();
   });
-  window.addEventListener("mouseup", () => {
-    dragging = false;
-  });
+  window.addEventListener("mouseup", () => { dragging = false; });
 
   // Remote autoplay unlock (mobile/safari)
   document.body.addEventListener("click", () => {
@@ -106,22 +151,14 @@
   // End call button
   hangupBtn?.addEventListener("click", hangup);
 
-  // ========= Audio mix helpers (local + remote -> one track) =========
+  // =========================
+  // Audio mix helpers
+  // =========================
   let audioCtx = null;
   let mixDest = null;
 
   function ensureAudioContext() {
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    if (audioCtx.state === "suspended") {
-      // resume on first user gesture
-      const resume = () => {
-        audioCtx.resume().catch(() => {});
-        window.removeEventListener("click", resume);
-        window.removeEventListener("touchstart", resume);
-      };
-      window.addEventListener("click", resume, { once: true });
-      window.addEventListener("touchstart", resume, { once: true });
-    }
     if (!mixDest) mixDest = audioCtx.createMediaStreamDestination();
     return { audioCtx, mixDest };
   }
@@ -132,11 +169,10 @@
     return audioCtx.createMediaStreamSource(ms);
   }
 
-  // Build a MediaStream that combines canvas video + merged audio (local + remote)
+  // Build MediaStream with canvas video + merged audio (local + remote)
   function buildMixedMediaStream(canvasStream, localStreamIn, remoteStreamIn) {
-    // Create fresh destination each time to avoid stale graph
     ensureAudioContext();
-    mixDest = audioCtx.createMediaStreamDestination();
+    mixDest = audioCtx.createMediaStreamDestination(); // fresh destination
 
     const addAudioFrom = (stream) => {
       if (!stream) return;
@@ -153,24 +189,30 @@
     addAudioFrom(localStreamIn);
     addAudioFrom(remoteStreamIn);
 
-    return new MediaStream([
+    const out = new MediaStream([
       ...canvasStream.getVideoTracks(),
       ...mixDest.stream.getAudioTracks(),
     ]);
+    return out;
   }
 
-  // ========= Boot =========
+  // =========================
+  // Boot
+  // =========================
   (async function start() {
     setStatus("Initializing camera...");
     try {
+      // Request cam+mic
       localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       localVideo.srcObject = localStream;
-      localVideo.muted = true; // prevent local echo
+      localVideo.muted = true;
       updatePipPosition();
 
       if (!UPLOAD_ID) {
         console.warn("No callToken/upload_id on page; WebRTC will work but uploads will fail.");
       }
+
+      // Join signaling room
       socket.emit("joinRoom", UPLOAD_ID);
       setStatus("Waiting for peer...");
     } catch (err) {
@@ -180,7 +222,9 @@
     }
   })();
 
-  // ========= Signaling =========
+  // =========================
+  // Signaling
+  // =========================
   socket.on("joinedRoom", (data) => {
     const isCaller = !!data.isCaller;
     if (isCaller) {
@@ -208,15 +252,19 @@
 
   socket.on("ice-candidate", async (candidate) => {
     if (candidate && peerConnection) {
-      try {
-        await peerConnection.addIceCandidate(candidate);
-      } catch (err) {
-        console.error("ICE add error:", err);
-      }
+      try { await peerConnection.addIceCandidate(candidate); }
+      catch (err) { console.error("ICE add error:", err); }
     }
   });
 
-  // ========= WebRTC =========
+  // =========================
+  // WebRTC
+  // =========================
+  function clearTimers() {
+    if (dcTimer) { clearTimeout(dcTimer); dcTimer = null; }
+    if (failedTimer) { clearTimeout(failedTimer); failedTimer = null; }
+  }
+
   function createPeerConnection() {
     peerConnection = new RTCPeerConnection({
       iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
@@ -232,22 +280,46 @@
       }
     };
 
-    // Remote stream
+    // Remote media
     peerConnection.ontrack = (e) => {
-      if (!remoteStream) remoteStream = e.streams[0];
-      remoteVideo.srcObject = remoteStream;
-      remoteVideo.muted = false;
-      remoteVideo.volume = 1.0;
-      remoteVideo.play().catch((err) => console.warn("Remote play blocked:", err));
+      const stream = e.streams && e.streams[0] ? e.streams[0] : null;
+      if (!stream) return;
+
+      if (!remoteStream) {
+        remoteStream = stream;
+      }
+
+      // Attach only once to avoid AbortError from repeated loads
+      if (!remoteAttached) {
+        remoteVideo.srcObject = remoteStream;
+        remoteVideo.muted = false;
+        remoteVideo.volume = 1.0;
+
+        const tryPlay = () => {
+          if (remotePlayTried) return;
+          remotePlayTried = true;
+          remoteVideo.play().catch(() => {
+            const resume = () => {
+              remoteVideo.play().catch(() => {});
+              document.removeEventListener("click", resume);
+              document.removeEventListener("touchstart", resume);
+            };
+            document.addEventListener("click", resume, { once: true });
+            document.addEventListener("touchstart", resume, { once: true });
+          });
+        };
+
+        if (remoteVideo.readyState >= 2) {
+          tryPlay();
+        } else {
+          remoteVideo.addEventListener("canplay", tryPlay, { once: true });
+        }
+
+        remoteAttached = true;
+      }
     };
 
-    // ***** Robust connection handling *****
-    const clearTimers = () => {
-      if (dcTimer) { clearTimeout(dcTimer); dcTimer = null; }
-      if (failedTimer) { clearTimeout(failedTimer); failedTimer = null; }
-    };
-
-    // Use ICE state (more granular than overall connectionState)
+    // ICE connection state (with grace)
     peerConnection.oniceconnectionstatechange = () => {
       const s = peerConnection.iceConnectionState;
       console.log("ICE state:", s);
@@ -259,32 +331,31 @@
           setStatus("Call connected");
           startPiPDrawing();
           if (getJWT() && !recording) startChunkedRecording();
-          else if (!getJWT()) console.log("Viewer mode (no JWT) — not recording or uploading.");
+          else if (!getJWT()) console.log("Viewer mode (no JWT) — not recording.");
         }
       }
 
-      // Transient blips: wait before stopping
       if (s === "disconnected") {
         clearTimers();
+        // allow brief network blips to recover
         dcTimer = setTimeout(() => {
           if (peerConnection && peerConnection.iceConnectionState === "disconnected") {
-            console.warn("ICE stayed disconnected, stopping recording.");
+            console.warn("ICE stayed disconnected; stopping recording.");
             stopRecording();
             setStatus("Call disconnected");
           }
-        }, 15000); // 15s grace
+        }, 15000);
       }
 
-      // Failure: also grace period (sometimes recovers)
       if (s === "failed") {
         clearTimers();
         failedTimer = setTimeout(() => {
           if (peerConnection && peerConnection.iceConnectionState === "failed") {
-            console.error("ICE failed persistently, stopping.");
+            console.error("ICE failed persistently; stopping.");
             stopRecording();
             setStatus("Call failed");
           }
-        }, 8000); // 8s grace
+        }, 8000);
       }
 
       if (s === "closed") {
@@ -292,6 +363,11 @@
         stopRecording();
         setStatus("Call closed");
       }
+    };
+
+    // Generic connection state (informational)
+    peerConnection.onconnectionstatechange = () => {
+      console.log("Peer state:", peerConnection.connectionState);
     };
   }
 
@@ -302,7 +378,9 @@
     socket.emit("offer", { roomId: UPLOAD_ID, offer });
   }
 
-  // ========= PiP drawing to canvas =========
+  // =========================
+  // PiP drawing to canvas
+  // =========================
   function startPiPDrawing() {
     mixedCanvas.width = 640;
     mixedCanvas.height = 480;
@@ -325,26 +403,21 @@
     cancelAnimationFrame(mixAnimationId);
   }
 
-  // ========= Recording (chunked) =========
+  // =========================
+  // Recording (chunked)
+  // =========================
   function startChunkedRecording() {
     if (recording || !callStarted) return;
-    if (!getJWT()) {
-      console.warn("No JWT; skipping recording.");
-      return;
-    }
+    if (!getJWT()) { console.warn("No JWT; skipping recording."); return; }
 
     setStatus("Recording...", true);
     recording = true;
     finalized = false;
     seq = 0;
 
-    // 1) Canvas video stream
     const canvasStream = mixedCanvas.captureStream(30);
-
-    // 2) Mixed stream (video + audio mix)
     const mixed = buildMixedMediaStream(canvasStream, localStream, remoteStream);
 
-    // 3) Recorder
     try {
       recorder = new MediaRecorder(mixed, { mimeType: "video/webm" });
     } catch (e) {
@@ -375,22 +448,19 @@
       }
     };
 
-    // Fire every 5 seconds (first chunk ~5s)
+    // 5s timeslice; first chunk ~5s, then continuous
     recorder.start(5000);
   }
 
+  let finalizeOnceGuard = false;
   async function finalizeUpload() {
+    if (finalizeOnceGuard) return;
+    finalizeOnceGuard = true;
     if (finalized) return;
     finalized = true;
 
-    if (!getJWT()) {
-      console.log("No JWT — finalize skipped.");
-      return;
-    }
-    if (!UPLOAD_ID) {
-      console.warn("No upload_id/callToken on page — cannot finalize.");
-      return;
-    }
+    if (!getJWT()) { console.log("No JWT — finalize skipped."); return; }
+    if (!UPLOAD_ID) { console.warn("No upload_id/callToken — cannot finalize."); return; }
 
     try {
       const res = await fetch(API + "/finalize-upload", {
@@ -414,16 +484,16 @@
   function stopRecording() {
     if (recorder && recording) {
       setStatus("Uploading...");
-      try {
-        recorder.stop();
-      } catch (e) {}
+      try { recorder.stop(); } catch (e) {}
       recording = false;
     }
     // allow final ondataavailable to flush
-    setTimeout(finalizeUpload, 400);
+    setTimeout(finalizeUpload, 300);
   }
 
-  // ========= Hang up =========
+  // =========================
+  // Hang up / teardown
+  // =========================
   function hangup() {
     setStatus("Call Ended");
     callEnded = true;
