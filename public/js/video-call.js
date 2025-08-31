@@ -45,7 +45,10 @@
 window.addEventListener('message', (evt) => {
   const allowed = [
     'https://dao.payvance.co.in',
-    'https://dao.payvance.co.in:8091',
+  'https://dao.payvance.co.in:8091',
+  'https://vcall.payvance.co.in',
+  'https://localhost:5173',
+  'http://localhost:5173',   
   ];
   if (!allowed.includes(evt.origin)) return;
 
