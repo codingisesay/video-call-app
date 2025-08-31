@@ -17,12 +17,9 @@
   // ========= App / API context =========
   const API = (window.Laravel && window.Laravel.apiUrl) || "/api";
   const UPLOAD_ID = (window.Laravel && window.Laravel.callToken) || null; // meeting_token or self-kyc upload_id
-  // const JWT = (window.Laravel && window.Laravel.jwtToken) || null;         // agent token (optional)
   function getJWT() {
-  return (window.Laravel && window.Laravel.jwtToken) || null; // agent token (may arrive later)
-}
-
-
+    return (window.Laravel && window.Laravel.jwtToken) || null; // may arrive later
+  }
 
   // ========= State =========
   let localStream = null;
@@ -40,30 +37,33 @@
   let finalized = false;
   let seq = 0; // chunk sequence counter
 
+  // Debounce timers for network blips
+  let dcTimer = null;      // "disconnected" grace timer
+  let failedTimer = null;  // "failed" grace timer
 
-  // Accept JWT via postMessage from DAO and kick off recording if ready
-window.addEventListener('message', (evt) => {
-  const allowed = [
-    'https://dao.payvance.co.in',
-  'https://dao.payvance.co.in:8091',
-  'https://vcall.payvance.co.in',
-  'https://localhost:5173',
-  'http://localhost:5173',   
-  ];
-  if (!allowed.includes(evt.origin)) return;
+  // ========= Accept JWT via postMessage =========
+  window.addEventListener("message", (evt) => {
+    const allowed = [
+      "https://dao.payvance.co.in",
+      "https://dao.payvance.co.in:8091",
+      "https://vcall.payvance.co.in",
+      "https://localhost:5173",
+      "http://localhost:5173",
+    ];
+    if (!allowed.includes(evt.origin)) return;
 
-  const msg = evt.data;
-  if (msg && msg.type === 'DAO_JWT' && typeof msg.token === 'string' && msg.token.length > 20) {
-    window.Laravel = window.Laravel || {};
-    window.Laravel.jwtToken = msg.token;
-    console.log('[vcall] JWT received via postMessage');
+    const msg = evt.data;
+    if (msg && msg.type === "DAO_JWT" && typeof msg.token === "string" && msg.token.length > 20) {
+      window.Laravel = window.Laravel || {};
+      window.Laravel.jwtToken = msg.token;
+      console.log("[vcall] JWT received via postMessage");
 
-    // If peer is already connected and we weren’t recording, start now
-    if (peerConnection && peerConnection.connectionState === 'connected' && !recording) {
-      startChunkedRecording();
+      // If peer is already connected and we weren’t recording, start now
+      if (peerConnection && ["connected", "completed"].includes(peerConnection.iceConnectionState) && !recording) {
+        startChunkedRecording();
+      }
     }
-  }
-});
+  });
 
   // PiP drag for local preview
   const pipPos = { x: 420, y: 300 };
@@ -94,7 +94,9 @@ window.addEventListener('message', (evt) => {
     pipPos.y = Math.max(0, Math.min(480 - 120, e.clientY - dragOffset.y));
     updatePipPosition();
   });
-  window.addEventListener("mouseup", () => { dragging = false; });
+  window.addEventListener("mouseup", () => {
+    dragging = false;
+  });
 
   // Remote autoplay unlock (mobile/safari)
   document.body.addEventListener("click", () => {
@@ -110,6 +112,16 @@ window.addEventListener('message', (evt) => {
 
   function ensureAudioContext() {
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") {
+      // resume on first user gesture
+      const resume = () => {
+        audioCtx.resume().catch(() => {});
+        window.removeEventListener("click", resume);
+        window.removeEventListener("touchstart", resume);
+      };
+      window.addEventListener("click", resume, { once: true });
+      window.addEventListener("touchstart", resume, { once: true });
+    }
     if (!mixDest) mixDest = audioCtx.createMediaStreamDestination();
     return { audioCtx, mixDest };
   }
@@ -141,18 +153,16 @@ window.addEventListener('message', (evt) => {
     addAudioFrom(localStreamIn);
     addAudioFrom(remoteStreamIn);
 
-    const out = new MediaStream([
+    return new MediaStream([
       ...canvasStream.getVideoTracks(),
       ...mixDest.stream.getAudioTracks(),
     ]);
-    return out;
   }
 
   // ========= Boot =========
   (async function start() {
     setStatus("Initializing camera...");
     try {
-      // Request cam+mic
       localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       localVideo.srcObject = localStream;
       localVideo.muted = true; // prevent local echo
@@ -180,7 +190,6 @@ window.addEventListener('message', (evt) => {
   });
 
   socket.on("peer-joined", () => {
-    // The caller may (re)send offer
     if (peerConnection) createAndSendOffer();
   });
 
@@ -199,8 +208,11 @@ window.addEventListener('message', (evt) => {
 
   socket.on("ice-candidate", async (candidate) => {
     if (candidate && peerConnection) {
-      try { await peerConnection.addIceCandidate(candidate); }
-      catch (err) { console.error("ICE add error:", err); }
+      try {
+        await peerConnection.addIceCandidate(candidate);
+      } catch (err) {
+        console.error("ICE add error:", err);
+      }
     }
   });
 
@@ -213,7 +225,7 @@ window.addEventListener('message', (evt) => {
     // Local tracks
     localStream.getTracks().forEach((t) => peerConnection.addTrack(t, localStream));
 
-    // ICE
+    // ICE candidates
     peerConnection.onicecandidate = (e) => {
       if (e.candidate) {
         socket.emit("ice-candidate", { roomId: UPLOAD_ID, candidate: e.candidate });
@@ -223,34 +235,62 @@ window.addEventListener('message', (evt) => {
     // Remote stream
     peerConnection.ontrack = (e) => {
       if (!remoteStream) remoteStream = e.streams[0];
-      // If multiple tracks arrive, browsers reuse the same stream
       remoteVideo.srcObject = remoteStream;
       remoteVideo.muted = false;
       remoteVideo.volume = 1.0;
       remoteVideo.play().catch((err) => console.warn("Remote play blocked:", err));
     };
 
-    // Connection state
-    peerConnection.onconnectionstatechange = () => {
-      const st = peerConnection.connectionState;
-      console.log("Peer state:", st);
+    // ***** Robust connection handling *****
+    const clearTimers = () => {
+      if (dcTimer) { clearTimeout(dcTimer); dcTimer = null; }
+      if (failedTimer) { clearTimeout(failedTimer); failedTimer = null; }
+    };
 
-      if (st === "connected") {
+    // Use ICE state (more granular than overall connectionState)
+    peerConnection.oniceconnectionstatechange = () => {
+      const s = peerConnection.iceConnectionState;
+      console.log("ICE state:", s);
+
+      if (s === "connected" || s === "completed") {
+        clearTimers();
         if (!callStarted) {
           callStarted = true;
           setStatus("Call connected");
-
-          // Start visual mixer
           startPiPDrawing();
-
-         // Record+upload only if JWT present (agent)
-if (getJWT()) startChunkedRecording();
-else console.log("Viewer mode (no JWT) — not recording or uploading.");
+          if (getJWT() && !recording) startChunkedRecording();
+          else if (!getJWT()) console.log("Viewer mode (no JWT) — not recording or uploading.");
         }
-      } else if (["failed", "disconnected", "closed"].includes(st)) {
-        setStatus("Call disconnected");
-        stopPiPDrawing();
+      }
+
+      // Transient blips: wait before stopping
+      if (s === "disconnected") {
+        clearTimers();
+        dcTimer = setTimeout(() => {
+          if (peerConnection && peerConnection.iceConnectionState === "disconnected") {
+            console.warn("ICE stayed disconnected, stopping recording.");
+            stopRecording();
+            setStatus("Call disconnected");
+          }
+        }, 15000); // 15s grace
+      }
+
+      // Failure: also grace period (sometimes recovers)
+      if (s === "failed") {
+        clearTimers();
+        failedTimer = setTimeout(() => {
+          if (peerConnection && peerConnection.iceConnectionState === "failed") {
+            console.error("ICE failed persistently, stopping.");
+            stopRecording();
+            setStatus("Call failed");
+          }
+        }, 8000); // 8s grace
+      }
+
+      if (s === "closed") {
+        clearTimers();
         stopRecording();
+        setStatus("Call closed");
       }
     };
   }
@@ -288,7 +328,10 @@ else console.log("Viewer mode (no JWT) — not recording or uploading.");
   // ========= Recording (chunked) =========
   function startChunkedRecording() {
     if (recording || !callStarted) return;
-    if (!getJWT()) { console.warn("No JWT; skipping recording."); return; }
+    if (!getJWT()) {
+      console.warn("No JWT; skipping recording.");
+      return;
+    }
 
     setStatus("Recording...", true);
     recording = true;
@@ -332,7 +375,7 @@ else console.log("Viewer mode (no JWT) — not recording or uploading.");
       }
     };
 
-    // Fire every 5 seconds
+    // Fire every 5 seconds (first chunk ~5s)
     recorder.start(5000);
   }
 
@@ -340,8 +383,14 @@ else console.log("Viewer mode (no JWT) — not recording or uploading.");
     if (finalized) return;
     finalized = true;
 
-    if (!getJWT()) { console.log("No JWT — finalize skipped."); return; }
-    if (!UPLOAD_ID) { console.warn("No upload_id/callToken on page — cannot finalize."); return; }
+    if (!getJWT()) {
+      console.log("No JWT — finalize skipped.");
+      return;
+    }
+    if (!UPLOAD_ID) {
+      console.warn("No upload_id/callToken on page — cannot finalize.");
+      return;
+    }
 
     try {
       const res = await fetch(API + "/finalize-upload", {
@@ -365,11 +414,13 @@ else console.log("Viewer mode (no JWT) — not recording or uploading.");
   function stopRecording() {
     if (recorder && recording) {
       setStatus("Uploading...");
-      try { recorder.stop(); } catch (e) {}
+      try {
+        recorder.stop();
+      } catch (e) {}
       recording = false;
     }
     // allow final ondataavailable to flush
-    setTimeout(finalizeUpload, 250);
+    setTimeout(finalizeUpload, 400);
   }
 
   // ========= Hang up =========
