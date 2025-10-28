@@ -4,7 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\MeetingController;
 use App\Http\Controllers\VideoController;
 
-Route::middleware('jwt.verify')->group(function () {
+// Route::middleware('jwt.verify')->group(function () {
     // Existing
     Route::post('/create-meeting', [MeetingController::class, 'create']);
     Route::post('/upload-video', [VideoController::class, 'upload']); // legacy single-shot
@@ -17,4 +17,4 @@ Route::middleware('jwt.verify')->group(function () {
     // NEW: self-KYC session + retake (no meeting_token initially)
     Route::post('/self-kyc/start',  [VideoController::class, 'startSelfKyc']);
     Route::post('/self-kyc/retake', [VideoController::class, 'retakeSelfKyc']);
-});
+// });
