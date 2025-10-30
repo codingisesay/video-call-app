@@ -49,6 +49,10 @@ class VideoController extends Controller
     
 
 
+
+
+
+    
 public function finalizeUpload(Request $request)
 {
     $data = $request->validate([

@@ -393,6 +393,8 @@
     }
   }
 
+  
+
   function stopRecording() {
     if (recorder && recording) {
       setStatus("Uploading...");
