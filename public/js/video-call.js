@@ -1,7 +1,3 @@
-// ==============================
-// video-call.js (frontend)
-// 5s chunking, mixed A/V capture, robust finalize
-// ==============================
 /* global io */
 (function () {
   // ========= Socket.io (signaling) =========
@@ -21,9 +17,12 @@
   // ========= App / API context =========
   const API = (window.Laravel && window.Laravel.apiUrl) || "/api";
   const UPLOAD_ID = (window.Laravel && window.Laravel.callToken) || null; // meeting_token or self-kyc upload_id
+  // const JWT = (window.Laravel && window.Laravel.jwtToken) || null;         // agent token (optional)
   function getJWT() {
-    return (window.Laravel && window.Laravel.jwtToken) || null; // agent token (may arrive later)
-  }
+  return (window.Laravel && window.Laravel.jwtToken) || null; // agent token (may arrive later)
+}
+
+
 
   // ========= State =========
   let localStream = null;
@@ -40,37 +39,38 @@
   let recording = false;
   let finalized = false;
   let seq = 0; // chunk sequence counter
-  let pendingUploads = 0; // in-flight chunk uploads
 
-  // ========= Accept JWT via postMessage from DAO =========
-  window.addEventListener('message', (evt) => {
-    const allowed = [
-      'https://dao.payvance.co.in',
-      'https://dao.payvance.co.in:8091',
-      'https://vcall.payvance.co.in',
-      'https://localhost:5173',
-      'http://localhost:5173',
-    ];
-    if (!allowed.includes(evt.origin)) return;
 
-    const msg = evt.data;
-    if (msg && msg.type === 'DAO_JWT' && typeof msg.token === 'string' && msg.token.length > 20) {
-      window.Laravel = window.Laravel || {};
-      window.Laravel.jwtToken = msg.token;
-      console.log('[vcall] JWT received via postMessage');
+  // Accept JWT via postMessage from DAO and kick off recording if ready
+window.addEventListener('message', (evt) => {
+  const allowed = [
+    'https://dao.payvance.co.in',
+  'https://dao.payvance.co.in:8091',
+  'https://vcall.payvance.co.in',
+  'https://localhost:5173',
+  'http://localhost:5173',   
+  ];
+  if (!allowed.includes(evt.origin)) return;
 
-      // If peer is already connected and we weren’t recording, start now
-      if (peerConnection && peerConnection.connectionState === 'connected' && !recording) {
-        startChunkedRecording();
-      }
+  const msg = evt.data;
+  if (msg && msg.type === 'DAO_JWT' && typeof msg.token === 'string' && msg.token.length > 20) {
+    window.Laravel = window.Laravel || {};
+    window.Laravel.jwtToken = msg.token;
+    console.log('[vcall] JWT received via postMessage');
+
+    // If peer is already connected and we weren’t recording, start now
+    if (peerConnection && peerConnection.connectionState === 'connected' && !recording) {
+      startChunkedRecording();
     }
-  });
+  }
+});
 
-  // ========= PiP drag for local preview =========
+  // PiP drag for local preview
   const pipPos = { x: 420, y: 300 };
   let dragging = false;
   let dragOffset = { x: 0, y: 0 };
 
+  // ========= UI helpers =========
   function setStatus(text, isRecording = false) {
     if (!statusBadge) return;
     statusBadge.textContent = text;
@@ -82,6 +82,7 @@
     localVideo.style.top = pipPos.y + "px";
   }
 
+  // Drag handlers
   localVideo.addEventListener("mousedown", (e) => {
     dragging = true;
     dragOffset.x = e.clientX - pipPos.x;
@@ -95,12 +96,9 @@
   });
   window.addEventListener("mouseup", () => { dragging = false; });
 
-  // Remote autoplay unlock + resume AudioContext (mobile/safari policies)
-  document.body.addEventListener("click", async () => {
-    try { await remoteVideo?.play(); } catch {}
-    if (audioCtx && audioCtx.state === "suspended") {
-      try { await audioCtx.resume(); } catch {}
-    }
+  // Remote autoplay unlock (mobile/safari)
+  document.body.addEventListener("click", () => {
+    remoteVideo?.play().catch(() => {});
   });
 
   // End call button
@@ -108,7 +106,7 @@
 
   // ========= Audio mix helpers (local + remote -> one track) =========
   let audioCtx = null;
-  let mixDest = null; // MediaStreamDestination
+  let mixDest = null;
 
   function ensureAudioContext() {
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -122,8 +120,9 @@
     return audioCtx.createMediaStreamSource(ms);
   }
 
+  // Build a MediaStream that combines canvas video + merged audio (local + remote)
   function buildMixedMediaStream(canvasStream, localStreamIn, remoteStreamIn) {
-    // Fresh destination each time to avoid stale graphs
+    // Create fresh destination each time to avoid stale graph
     ensureAudioContext();
     mixDest = audioCtx.createMediaStreamDestination();
 
@@ -181,6 +180,7 @@
   });
 
   socket.on("peer-joined", () => {
+    // The caller may (re)send offer
     if (peerConnection) createAndSendOffer();
   });
 
@@ -223,15 +223,11 @@
     // Remote stream
     peerConnection.ontrack = (e) => {
       if (!remoteStream) remoteStream = e.streams[0];
+      // If multiple tracks arrive, browsers reuse the same stream
       remoteVideo.srcObject = remoteStream;
       remoteVideo.muted = false;
       remoteVideo.volume = 1.0;
       remoteVideo.play().catch((err) => console.warn("Remote play blocked:", err));
-
-      // IMPORTANT: start recording here once remote track exists (JWT required)
-      if (peerConnection.connectionState === "connected" && getJWT() && !recording) {
-        startChunkedRecording();
-      }
     };
 
     // Connection state
@@ -247,10 +243,9 @@
           // Start visual mixer
           startPiPDrawing();
 
-          // If remote track already arrived earlier and JWT is present, ensure recording
-          if (getJWT() && !recording && remoteStream) {
-            startChunkedRecording();
-          }
+         // Record+upload only if JWT present (agent)
+if (getJWT()) startChunkedRecording();
+else console.log("Viewer mode (no JWT) — not recording or uploading.");
         }
       } else if (["failed", "disconnected", "closed"].includes(st)) {
         setStatus("Call disconnected");
@@ -290,19 +285,10 @@
     cancelAnimationFrame(mixAnimationId);
   }
 
-  // ========= Recording (5s chunked) =========
+  // ========= Recording (chunked) =========
   function startChunkedRecording() {
     if (recording || !callStarted) return;
     if (!getJWT()) { console.warn("No JWT; skipping recording."); return; }
-
-    // Ensure we have both local and (ideally) remote audio before we proceed
-    if (!remoteStream || remoteStream.getAudioTracks().length === 0) {
-      console.log("Remote audio not ready; delaying recorder start by 300ms");
-      setTimeout(() => {
-        if (!recording && getJWT()) startChunkedRecording();
-      }, 300);
-      return;
-    }
 
     setStatus("Recording...", true);
     recording = true;
@@ -317,50 +303,33 @@
 
     // 3) Recorder
     try {
-      recorder = new MediaRecorder(mixed, { mimeType: "video/webm;codecs=vp9,opus" });
+      recorder = new MediaRecorder(mixed, { mimeType: "video/webm" });
     } catch (e) {
-      try { recorder = new MediaRecorder(mixed, { mimeType: "video/webm" }); }
-      catch (e2) { recorder = new MediaRecorder(mixed); }
+      console.warn("MediaRecorder with webm failed; trying default", e);
+      recorder = new MediaRecorder(mixed);
     }
 
-    // Upload helper with pending counter + tiny retry
-    async function uploadChunk(fd) {
-      pendingUploads++;
-      try {
-        for (let attempt = 1; attempt <= 3; attempt++) {
-          const res = await fetch(API + "/upload-chunk", {
-            method: "POST",
-            headers: { Authorization: "Bearer " + getJWT() },
-            body: fd,
-          });
-          if (res.ok) return;
-          const txt = await res.text().catch(() => "");
-          console.warn("Chunk upload failed", res.status, txt, "attempt", attempt);
-          await new Promise(r => setTimeout(r, attempt * 300));
-        }
-      } catch (err) {
-        console.error("Chunk upload error", err);
-      } finally {
-        pendingUploads--;
-      }
-    }
-
-    recorder.ondataavailable = (e) => {
+    recorder.ondataavailable = async (e) => {
       if (!e.data || !e.data.size) return;
       const fd = new FormData();
       fd.append("upload_id", UPLOAD_ID || "");
       fd.append("seq", String(seq));
       fd.append("chunk", e.data, `part_${seq}.webm`);
       seq++;
-      uploadChunk(fd);
-    };
 
-    recorder.onstop = async () => {
-      // Wait for trailing uploads
-      while (pendingUploads > 0) {
-        await new Promise(r => setTimeout(r, 100));
+      try {
+        const res = await fetch(API + "/upload-chunk", {
+          method: "POST",
+          headers: { Authorization: "Bearer " + getJWT() },
+          body: fd,
+        });
+        if (!res.ok) {
+          const txt = await res.text().catch(() => "");
+          console.error("Chunk upload failed", res.status, txt);
+        }
+      } catch (err) {
+        console.error("Chunk upload error", err);
       }
-      await finalizeUpload();
     };
 
     // Fire every 5 seconds
@@ -399,6 +368,8 @@
       try { recorder.stop(); } catch (e) {}
       recording = false;
     }
+    // allow final ondataavailable to flush
+    setTimeout(finalizeUpload, 250);
   }
 
   // ========= Hang up =========
@@ -422,8 +393,7 @@
     stopRecording();
   }
 
-  // Try to finalize if tab closes (graceful)
-  window.addEventListener("beforeunload", () => { if (!finalized) stopRecording(); });
-  window.addEventListener("pagehide", () => { if (!finalized) stopRecording(); });
+  // Try to finalize if tab closes
+  window.addEventListener("beforeunload", finalizeUpload);
+  window.addEventListener("pagehide", finalizeUpload);
 })();
-
