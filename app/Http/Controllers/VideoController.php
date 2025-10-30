@@ -504,7 +504,7 @@ private function authorizeAgent(Request $request, VideoMeeting $meeting)
     {
         if (!$jwtToken || !$applicationId) return;
         try {
-            $daoApiUrl = rtrim(env('DAO_API_URL'), '/') . '/dao/api/video-status-update';
+            $daoApiUrl = rtrim(env('DAO_API_URL'), '/') . 'api/video-status-update';
             $daoResponse = Http::withHeaders([
                 'Authorization' => 'Bearer ' . $jwtToken,
                 'Accept'        => 'application/json',
