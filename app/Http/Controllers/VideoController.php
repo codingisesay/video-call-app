@@ -46,13 +46,7 @@ class VideoController extends Controller
         return response()->json(['success' => true, 'message' => 'Chunk received']);
     }
 
-    
 
-
-
-
-
-    
 public function finalizeUpload(Request $request)
 {
     $data = $request->validate([
@@ -772,4 +766,9 @@ public function fetchVideoDetailsByApplicationOrKyc(Request $request)
     }
 }
 
+public function ping(Request $request)
+{
+    return response()->json(['success' => true, 'message' => 'pong']);
+
+}
 }
