@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Symfony\Component\Process\Process;
 
+
 class VideoController extends Controller
 {
     // ========= Chunked upload (agent-only) =========
@@ -48,174 +49,11 @@ class VideoController extends Controller
     
 
 
-
-//     public function finalizeUpload(Request $request)
-// {
-//     $request->validate([
-//         'upload_id'   => 'required|string',
-//         'total_parts' => 'required|integer|min:0',
-//     ]);
-
-//     $meeting = VideoMeeting::where('meeting_token', $request->upload_id)->first();
-//     if (!$meeting) {
-//         return response()->json(['success' => false, 'message' => 'Invalid upload_id'], 404);
-//     }
-
-//     // 🚫 You disabled per-meeting agent check by design (high-trust mode)
-//     // if ($resp = $this->authorizeAgent($request, $meeting)) return $resp;
-
-//     return DB::transaction(function () use ($request, $meeting) {
-//         $meeting = VideoMeeting::where('id', $meeting->id)->lockForUpdate()->first();
-
-//         if ($this->hasFinalFlag() && $meeting->recording_uploaded) {
-//             return response()->json(['success' => true, 'message' => 'Already finalized']);
-//         }
-
-//         $partsDir   = storage_path("app/recordings/{$meeting->id}/parts");
-//         $total      = (int) $request->total_parts;
-//         $publicDir  = storage_path('app/public/videos');
-//         @mkdir($publicDir, 0775, true);
-
-//         // Sanity: ensure parts exist
-//         for ($i = 0; $i < $total; $i++) {
-//             if (!file_exists("{$partsDir}/{$i}.webm")) {
-//                 return response()->json(['success' => false, 'message' => "Missing part {$i}"], 422);
-//             }
-//         }
-
-//         // Helper to run ffmpeg and capture diagnostics
-//         $run = function(array $cmd) {
-//             $proc = new \Symfony\Component\Process\Process($cmd);
-//             $proc->setTimeout(300);
-//             $proc->run();
-//             return [$proc->isSuccessful(), $proc->getOutput(), $proc->getErrorOutput(), implode(' ', $cmd)];
-//         };
-
-//         // Helper to check ffmpeg existence
-//         [$okProbe, $outProbe, $errProbe, $cmdProbe] = $run(['ffmpeg', '-version']);
-//         if (!$okProbe) {
-//             return response()->json([
-//                 'success' => false,
-//                 'message' => 'ffmpeg not found on PATH. Install ffmpeg or add to PATH and retry.',
-//                 'ffmpeg_cmd' => $cmdProbe,
-//                 'stderr' => $errProbe,
-//             ], 500);
-//         }
-
-//         // === Case 1: Single part → avoid concat demuxer entirely ===
-//         if ($total === 1) {
-//             $src = "{$partsDir}/0.webm";
-//             $dstWebm = "{$publicDir}/meeting_{$meeting->id}.webm";
-
-//             // Try stream copy first (fast)
-//             [$okCopy, $outCopy, $errCopy, $cmdCopy] = $run(['ffmpeg', '-i', $src, '-c', 'copy', '-y', $dstWebm]);
-
-//             if (!$okCopy) {
-//                 // Fallback to re-encode MP4 (more compatible)
-//                 $dstMp4 = "{$publicDir}/meeting_{$meeting->id}.mp4";
-//                 [$okRe, $outRe, $errRe, $cmdRe] = $run([
-//                     'ffmpeg', '-i', $src,
-//                     '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
-//                     '-c:a', 'aac', '-y', $dstMp4
-//                 ]);
-
-//                 if (!$okRe) {
-//                     return response()->json([
-//                         'success' => false,
-//                         'message' => 'ffmpeg failed to finalize single part',
-//                         'stderr_copy' => $errCopy,
-//                         'stderr_encode' => $errRe,
-//                         'cmd_copy' => $cmdCopy,
-//                         'cmd_encode' => $cmdRe,
-//                     ], 500);
-//                 }
-
-//                 $finalPath = "videos/meeting_{$meeting->id}.mp4";
-//             } else {
-//                 $finalPath = "videos/meeting_{$meeting->id}.webm";
-//             }
-
-//         } else {
-//             // === Case 2: Multiple parts → concat demuxer with safe list file ===
-//             $listFile = storage_path("app/recordings/{$meeting->id}/list.txt");
-//             @mkdir(dirname($listFile), 0775, true);
-
-//             $lines = [];
-//             for ($i = 0; $i < $total; $i++) {
-//                 // ffmpeg concat list requires POSIX-like quoting; ensure absolute paths
-//                 $p = "{$partsDir}/{$i}.webm";
-//                 $lines[] = "file '" . str_replace("'", "'\\''", $p) . "'";
-//             }
-//             file_put_contents($listFile, implode(PHP_EOL, $lines));
-
-//             $dstWebm = "{$publicDir}/meeting_{$meeting->id}.webm";
-//             [$okConcat, $outConcat, $errConcat, $cmdConcat] = $run([
-//                 'ffmpeg', '-f', 'concat', '-safe', '0', '-i', $listFile, '-c', 'copy', '-y', $dstWebm
-//             ]);
-
-//             if (!$okConcat) {
-//                 // Fallback to re-encode MP4 across parts
-//                 $dstMp4 = "{$publicDir}/meeting_{$meeting->id}.mp4";
-//                 [$okRe, $outRe, $errRe, $cmdRe] = $run([
-//                     'ffmpeg', '-f', 'concat', '-safe', '0', '-i', $listFile,
-//                     '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
-//                     '-c:a', 'aac', '-y', $dstMp4
-//                 ]);
-
-//                 if (!$okRe) {
-//                     return response()->json([
-//                         'success' => false,
-//                         'message' => 'ffmpeg concat failed',
-//                         'stderr_concat' => $errConcat,
-//                         'stderr_encode' => $errRe,
-//                         'cmd_concat' => $cmdConcat,
-//                         'cmd_encode' => $cmdRe,
-//                         'list_txt' => file_get_contents($listFile),
-//                     ], 500);
-//                 }
-
-//                 $finalPath = "videos/meeting_{$meeting->id}.mp4";
-//             } else {
-//                 $finalPath = "videos/meeting_{$meeting->id}.webm";
-//             }
-
-//             // Clean list file
-//             try { @unlink($listFile); } catch (\Throwable $e) {}
-//         }
-
-//         // Upsert one row per meeting
-//         \App\Models\VideoCall::updateOrCreate(
-//             ['video_meeting_id' => $meeting->id],
-//             ['file_path' => $finalPath, 'status' => 'uploaded', 'updated_at' => now(), 'created_at' => now()]
-//         );
-
-//         if ($this->hasFinalFlag()) {
-//             $meeting->recording_uploaded = 1;
-//             $meeting->save();
-//         }
-
-//         // Cleanup parts dir
-//         try { $this->rrmdir($partsDir); } catch (\Throwable $e) {
-//             \Log::warning('Cleanup parts failed', ['err' => $e->getMessage()]);
-//         }
-
-//         // Notify DAO (best-effort)
-//         $this->notifyDao(request()->bearerToken(), $meeting->application_id);
-
-//         return response()->json([
-//             'success'    => true,
-//             'message'    => 'Finalized',
-//             'final_path' => $finalPath,
-//             'public_url' => asset('storage/' . $finalPath),
-//         ]);
-//     });
-// }
-
 // public function finalizeUpload(Request $request)
 // {
 //     $data = $request->validate([
 //         'upload_id'   => 'required|string',
-//         'total_parts' => 'nullable|integer|min:1', // now optional; we'll discover files
+//         'total_parts' => 'nullable|integer|min:1', // guidance only; we discover files
 //     ]);
 
 //     $meeting = VideoMeeting::where('meeting_token', $data['upload_id'])->first();
@@ -235,12 +73,15 @@ class VideoController extends Controller
 //         @mkdir($publicDir, 0775, true);
 
 //         if (!is_dir($partsDir)) {
-//             return response()->json(['success' => false, 'message' => 'Parts directory missing', 'dir' => $partsDir], 422);
+//             return response()->json([
+//                 'success' => false,
+//                 'message' => 'Parts directory missing',
+//                 'dir'     => $partsDir,
+//             ], 422);
 //         }
 
-//         // ---- Discover parts from disk (ignore provided total_parts) ----
+//         // ---- Discover parts from disk ----
 //         $files = glob($partsDir . '/*.webm') ?: [];
-//         // Match both "N.webm" and "part_N.webm", sort by numeric N
 //         $indexed = [];
 //         foreach ($files as $f) {
 //             if (preg_match('~(?:^|/)(?:part_)?(\d+)\.webm$~', $f, $m)) {
@@ -253,38 +94,41 @@ class VideoController extends Controller
 //             return response()->json(['success' => false, 'message' => 'No parts found'], 422);
 //         }
 
-//         // If you want to enforce continuity (0..N-1), uncomment:
+//         // Optional: enforce continuity 0..N-1
 //         /*
-//         $expected = range(0, max(array_keys($indexed)));
-//         $missing = array_diff($expected, array_keys($indexed));
+//         $expected = range(0, max(array_KEYS($indexed)));
+//         $missing  = array_diff($expected, array_keys($indexed));
 //         if (!empty($missing)) {
 //             return response()->json(['success' => false, 'message' => 'Missing parts: '.implode(',', $missing)], 422);
 //         }
 //         */
 
-//         // Prepare runner
+//         // --- Runner (Symfony Process) ---
 //         $run = function(array $cmd) {
 //             $proc = new \Symfony\Component\Process\Process($cmd);
-//             $proc->setTimeout(900); // allow time to encode
+//             $proc->setTimeout(900);
 //             $proc->run();
-//             // Return a shell-escaped cmd for logging
 //             $esc = implode(' ', array_map('escapeshellarg', $cmd));
 //             return [$proc->isSuccessful(), $proc->getOutput(), $proc->getErrorOutput(), $esc];
 //         };
 
-//         // ffmpeg check
+//         // ffmpeg availability
 //         [$okProbe,, $errProbe] = $run(['ffmpeg', '-version']);
 //         if (!$okProbe) {
-//             return response()->json(['success' => false, 'message' => 'ffmpeg not found in PATH', 'stderr' => $errProbe], 500);
+//             return response()->json([
+//                 'success' => false,
+//                 'message' => 'ffmpeg not found in PATH',
+//                 'stderr'  => $errProbe,
+//             ], 500);
 //         }
 
-//         // Single-part fast path
+//         // === Single part fast path ===
 //         if (count($indexed) === 1) {
 //             $src = reset($indexed);
-//             $dstWebm = "{$publicDir}/meeting_{$meetingId}.webm";
-//             [$okCopy,, $errCopy, $cmdCopy] = $run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-i', $src, '-c', 'copy', '-y', $dstWebm]);
+//             $dstWebm = "$publicDir/meeting_{$meetingId}.webm";
+//             [$okCopy,, $errCopy, $cmdCopy] = $run(['ffmpeg','-hide_banner','-loglevel','error','-i',$src,'-c','copy','-y',$dstWebm]);
 //             if (!$okCopy) {
-//                 $dstMp4 = "{$publicDir}/meeting_{$meetingId}.mp4";
+//                 $dstMp4 = "$publicDir/meeting_{$meetingId}.mp4";
 //                 [$okRe,, $errRe, $cmdRe] = $run([
 //                     'ffmpeg','-hide_banner','-loglevel','error','-i',$src,
 //                     '-c:v','libx264','-preset','veryfast','-crf','23',
@@ -302,7 +146,7 @@ class VideoController extends Controller
 //                 $finalRel = "videos/meeting_{$meetingId}.webm";
 //             }
 //         } else {
-//             // Multi-part: build list.txt
+//             // === Multi-part: concat list + re-encode for reliability ===
 //             $listFile = storage_path("app/recordings/{$meetingId}/list.txt");
 //             $lines = [];
 //             foreach ($indexed as $abs) {
@@ -310,21 +154,18 @@ class VideoController extends Controller
 //             }
 //             file_put_contents($listFile, implode(PHP_EOL, $lines));
 
-//             // Prefer re-encode for reliability (h264/aac) to avoid copy/PTS issues
-//             $dstMp4 = "{$publicDir}/meeting_{$meetingId}.mp4";
+//             $dstMp4 = "$publicDir/meeting_{$meetingId}.mp4";
 //             [$okRe,, $errRe, $cmdRe] = $run([
 //                 'ffmpeg','-hide_banner','-loglevel','error',
 //                 '-f','concat','-safe','0','-i',$listFile,
-//                 '-fflags','+genpts',                 // regen timestamps; helps when chunks start at 0
+//                 '-fflags','+genpts', // regenerate timestamps for concatenated chunks
 //                 '-c:v','libx264','-preset','veryfast','-crf','23',
-//                 '-c:a','aac','-b:a','128k',
-//                 '-movflags','+faststart',
-//                 '-y',$dstMp4
+//                 '-c:a','aac','-b:a','128k','-movflags','+faststart','-y',$dstMp4
 //             ]);
 
 //             if (!$okRe) {
-//                 // As a last resort, try copy (may succeed if streams match perfectly)
-//                 $dstWebm = "{$publicDir}/meeting_{$meetingId}.webm";
+//                 // Last resort: try stream copy (may work if chunks match perfectly)
+//                  $dstWebm = "$publicDir/meeting_{$meetingId}.webm";
 //                 [$okCopy,, $errCopy, $cmdCopy] = $run([
 //                     'ffmpeg','-hide_banner','-loglevel','error',
 //                     '-f','concat','-safe','0','-i',$listFile,
@@ -347,6 +188,7 @@ class VideoController extends Controller
 //             @unlink($listFile);
 //         }
 
+//         // Persist/mark uploaded
 //         \App\Models\VideoCall::updateOrCreate(
 //             ['video_meeting_id' => $meetingId],
 //             ['file_path' => $finalRel, 'status' => 'uploaded', 'updated_at' => now(), 'created_at' => now()]
@@ -357,14 +199,15 @@ class VideoController extends Controller
 //             $meeting->save();
 //         }
 
-//         // Cleanup parts
+//         // Cleanup parts (best-effort)
 //         try { $this->rrmdir($partsDir); } catch (\Throwable $e) {
 //             \Log::warning('Cleanup parts failed', ['meeting_id'=>$meetingId,'err'=>$e->getMessage()]);
 //         }
 
+//         // Public URL via Storage (needs storage:link)
 //         $publicUrl = \Storage::disk('public')->url($finalRel);
 
-//         // Notify DAO (optional: include meta)
+//         // Notify DAO (optional meta)
 //         $this->notifyDao($request->bearerToken(), $meeting->application_id, [
 //             'video_url'   => $publicUrl,
 //             'meeting_id'  => $meetingId,
@@ -381,26 +224,37 @@ class VideoController extends Controller
 //     });
 // }
 
+
+
+/**
+ * Finalize chunked recording: robust merge of .webm parts into a single .mp4.
+ * - Discovers parts from disk (doesn’t trust total_parts blindly)
+ * - Normalizes each part to H.264/AAC; adds silent audio if missing
+ * - Concatenates normalized parts with stream copy (fast & stable)
+ * - Cleans temp files; returns public URL and notifies DAO
+ */
 public function finalizeUpload(Request $request)
 {
     $data = $request->validate([
-        'upload_id'   => 'required|string',
-        'total_parts' => 'nullable|integer|min:1', // guidance only; we discover files
+        'upload_id'   => 'required|string',         // meeting_token
+        'total_parts' => 'nullable|integer|min:1',  // informational only
     ]);
 
-    $meeting = VideoMeeting::where('meeting_token', $data['upload_id'])->first();
+    $meeting = \App\Models\VideoMeeting::where('meeting_token', $data['upload_id'])->first();
     if (!$meeting) {
         return response()->json(['success' => false, 'message' => 'Invalid upload_id'], 404);
     }
 
     return DB::transaction(function () use ($data, $meeting, $request) {
-        $meeting = VideoMeeting::where('id', $meeting->id)->lockForUpdate()->first();
+        // lock the row to avoid double finalize
+        $meeting = \App\Models\VideoMeeting::where('id', $meeting->id)->lockForUpdate()->first();
         if ($this->hasFinalFlag() && $meeting->recording_uploaded) {
             return response()->json(['success' => true, 'message' => 'Already finalized']);
         }
 
         $meetingId = $meeting->id;
-        $partsDir  = storage_path("app/recordings/{$meetingId}/parts");
+        $workDir   = storage_path("app/recordings/{$meetingId}");
+        $partsDir  = $workDir . '/parts';
         $publicDir = storage_path('app/public/videos');
         @mkdir($publicDir, 0775, true);
 
@@ -426,101 +280,143 @@ public function finalizeUpload(Request $request)
             return response()->json(['success' => false, 'message' => 'No parts found'], 422);
         }
 
-        // Optional: enforce continuity 0..N-1
-        /*
-        $expected = range(0, max(array_KEYS($indexed)));
-        $missing  = array_diff($expected, array_keys($indexed));
-        if (!empty($missing)) {
-            return response()->json(['success' => false, 'message' => 'Missing parts: '.implode(',', $missing)], 422);
-        }
-        */
-
-        // --- Runner (Symfony Process) ---
-        $run = function(array $cmd) {
+        // --- Process runner (ffprobe/ffmpeg) ---
+        $run = function (array $cmd) {
             $proc = new \Symfony\Component\Process\Process($cmd);
             $proc->setTimeout(900);
             $proc->run();
-            $esc = implode(' ', array_map('escapeshellarg', $cmd));
-            return [$proc->isSuccessful(), $proc->getOutput(), $proc->getErrorOutput(), $esc];
+            return [$proc->isSuccessful(), $proc->getOutput(), $proc->getErrorOutput(), implode(' ', $cmd)];
         };
 
         // ffmpeg availability
-        [$okProbe,, $errProbe] = $run(['ffmpeg', '-version']);
+        [$okProbe] = $run(['ffmpeg', '-version']);
         if (!$okProbe) {
             return response()->json([
                 'success' => false,
                 'message' => 'ffmpeg not found in PATH',
-                'stderr'  => $errProbe,
             ], 500);
         }
 
         // === Single part fast path ===
         if (count($indexed) === 1) {
             $src = reset($indexed);
-            $dstWebm = "$publicDir/meeting_{$meetingId}.webm";
+            $dstWebm = "{$publicDir}/meeting_{$meetingId}.webm";
             [$okCopy,, $errCopy, $cmdCopy] = $run(['ffmpeg','-hide_banner','-loglevel','error','-i',$src,'-c','copy','-y',$dstWebm]);
+
             if (!$okCopy) {
-                $dstMp4 = "$publicDir/meeting_{$meetingId}.mp4";
+                $dstMp4 = "{$publicDir}/meeting_{$meetingId}.mp4";
                 [$okRe,, $errRe, $cmdRe] = $run([
                     'ffmpeg','-hide_banner','-loglevel','error','-i',$src,
                     '-c:v','libx264','-preset','veryfast','-crf','23',
                     '-c:a','aac','-b:a','128k','-movflags','+faststart','-y',$dstMp4
                 ]);
+
                 if (!$okRe) {
                     return response()->json([
-                        'success'=>false,'message'=>'ffmpeg failed single-part',
-                        'stderr_copy'=>$errCopy,'stderr_encode'=>$errRe,
-                        'cmd_copy'=>$cmdCopy,'cmd_encode'=>$cmdRe
-                    ],500);
+                        'success'       => false,
+                        'message'       => 'ffmpeg failed single-part',
+                        'stderr_copy'   => $errCopy,
+                        'stderr_encode' => $errRe,
+                        'cmd_copy'      => $cmdCopy,
+                        'cmd_encode'    => $cmdRe,
+                    ], 500);
                 }
+
                 $finalRel = "videos/meeting_{$meetingId}.mp4";
             } else {
                 $finalRel = "videos/meeting_{$meetingId}.webm";
             }
+
         } else {
-            // === Multi-part: concat list + re-encode for reliability ===
-            $listFile = storage_path("app/recordings/{$meetingId}/list.txt");
+            // === Multi-part robust path: normalize each part, then concat ===
+            $normDir = $workDir . '/norm';
+            @mkdir($normDir, 0775, true);
+            $normFiles = [];
+
+            // helper: does stream exist? (e.g., 'a:0' or 'v:0')
+            $hasStream = function (string $abs, string $selector) use (&$run): bool {
+                [$ok, $out] = $run([
+                    'ffprobe','-hide_banner','-loglevel','error',
+                    '-select_streams',$selector,
+                    '-show_entries','stream=codec_name',
+                    '-of','csv=p=0',
+                    $abs
+                ]);
+                return $ok && trim($out) !== '';
+            };
+
+            foreach ($indexed as $seqN => $abs) {
+                $norm = "{$normDir}/norm_{$seqN}.mp4";
+                $audioExists = $hasStream($abs, 'a:0');
+
+                $cmd = ['ffmpeg','-hide_banner','-loglevel','error','-i',$abs];
+
+                if (!$audioExists) {
+                    // add silent audio; -shortest keeps output to video duration
+                    $cmd = array_merge($cmd, [
+                        '-f','lavfi','-t','86400','-i','anullsrc=channel_layout=stereo:sample_rate=48000',
+                        '-map','0:v:0','-map','1:a:0','-shortest'
+                    ]);
+                } else {
+                    $cmd = array_merge($cmd, ['-map','0:v:0','-map','0:a:0']);
+                }
+
+                $cmd = array_merge($cmd, [
+                    '-fflags','+genpts',
+                    '-r','30','-vsync','2',
+                    '-c:v','libx264','-preset','veryfast','-crf','23',
+                    '-c:a','aac','-b:a','128k',
+                    '-movflags','+faststart','-y',$norm
+                ]);
+
+                [$okN,, $errN, $cmdN] = $run($cmd);
+                if (!$okN) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => "Normalize failed for part {$seqN}",
+                        'stderr'  => $errN,
+                        'cmd'     => $cmdN
+                    ], 500);
+                }
+
+                $normFiles[] = $norm;
+            }
+
+            // Build concat list
+            $listFile = "{$workDir}/list.txt";
             $lines = [];
-            foreach ($indexed as $abs) {
-                $lines[] = "file '" . str_replace("'", "'\\''", $abs) . "'";
+            foreach ($normFiles as $p) {
+                $lines[] = "file '" . str_replace("'", "'\\''", $p) . "'";
             }
             file_put_contents($listFile, implode(PHP_EOL, $lines));
 
-            $dstMp4 = "$publicDir/meeting_{$meetingId}.mp4";
+            // Concat normalized parts with stream copy
+            $dstMp4 = "{$publicDir}/meeting_{$meetingId}.mp4";
             [$okRe,, $errRe, $cmdRe] = $run([
                 'ffmpeg','-hide_banner','-loglevel','error',
                 '-f','concat','-safe','0','-i',$listFile,
-                '-fflags','+genpts', // regenerate timestamps for concatenated chunks
-                '-c:v','libx264','-preset','veryfast','-crf','23',
-                '-c:a','aac','-b:a','128k','-movflags','+faststart','-y',$dstMp4
+                '-c','copy','-y',$dstMp4
             ]);
 
             if (!$okRe) {
-                // Last resort: try stream copy (may work if chunks match perfectly)
-                 $dstWebm = "$publicDir/meeting_{$meetingId}.webm";
-                [$okCopy,, $errCopy, $cmdCopy] = $run([
-                    'ffmpeg','-hide_banner','-loglevel','error',
-                    '-f','concat','-safe','0','-i',$listFile,
-                    '-c','copy','-y',$dstWebm
-                ]);
-                if (!$okCopy) {
-                    return response()->json([
-                        'success'=>false,'message'=>'ffmpeg concat failed (encode & copy)',
-                        'stderr_encode'=>$errRe,'stderr_copy'=>$errCopy,
-                        'cmd_encode'=>$cmdRe,'cmd_copy'=>$cmdCopy,
-                        'list_txt'=>file_get_contents($listFile),
-                        'parts_found'=>array_values($indexed)
-                    ],500);
-                }
-                $finalRel = "videos/meeting_{$meetingId}.webm";
-            } else {
-                $finalRel = "videos/meeting_{$meetingId}.mp4";
+                return response()->json([
+                    'success'  => false,
+                    'message'  => 'Final concat failed after normalize',
+                    'stderr'   => $errRe,
+                    'cmd'      => $cmdRe,
+                    'list_txt' => file_get_contents($listFile)
+                ], 500);
             }
 
+            $finalRel = "videos/meeting_{$meetingId}.mp4";
+
+            // Cleanup temp normalized files + list
             @unlink($listFile);
+            foreach ($normFiles as $p) { @unlink($p); }
+            @rmdir($normDir);
         }
 
-        // Persist/mark uploaded
+        // Save record
         \App\Models\VideoCall::updateOrCreate(
             ['video_meeting_id' => $meetingId],
             ['file_path' => $finalRel, 'status' => 'uploaded', 'updated_at' => now(), 'created_at' => now()]
@@ -531,21 +427,16 @@ public function finalizeUpload(Request $request)
             $meeting->save();
         }
 
-        // Cleanup parts (best-effort)
+        // Cleanup original parts (best-effort)
         try { $this->rrmdir($partsDir); } catch (\Throwable $e) {
-            \Log::warning('Cleanup parts failed', ['meeting_id'=>$meetingId,'err'=>$e->getMessage()]);
+            \Log::warning('Cleanup parts failed', ['meeting_id' => $meetingId, 'err' => $e->getMessage()]);
         }
 
-        // Public URL via Storage (needs storage:link)
-        $publicUrl = \Storage::disk('public')->url($finalRel);
+        // Public URL (requires `php artisan storage:link`)
+        $publicUrl = Storage::disk('public')->url($finalRel);
 
-        // Notify DAO (optional meta)
-        $this->notifyDao($request->bearerToken(), $meeting->application_id, [
-            'video_url'   => $publicUrl,
-            'meeting_id'  => $meetingId,
-            'parts_count' => count($indexed),
-            'format'      => str_ends_with($finalRel,'.mp4') ? 'mp4' : 'webm',
-        ]);
+        // Notify DAO (match your existing two-arg signature)
+        $this->notifyDao($request->bearerToken(), $meeting->application_id);
 
         return response()->json([
             'success'    => true,
@@ -555,6 +446,7 @@ public function finalizeUpload(Request $request)
         ]);
     });
 }
+
 
 
 
