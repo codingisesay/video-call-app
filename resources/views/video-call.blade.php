@@ -61,10 +61,14 @@
       window.addEventListener('message', function(evt){
         // Allow only your known DAO origins (include dev + prod)
         var allowed = [
-          'https://dao.payvance.co.in:8091',
-          'https://dao.payvance.co.in',
-          'https://localhost:5173',
-          'http://localhost:5173'
+      'https://dao.payvance.co.in',
+      'https://dao.payvance.co.in:8091',
+      'https://vcall.payvance.co.in',
+      'https://localhost:5173',
+      'http://localhost:5173',
+      'https://172.16.1.225:9443',
+      'https://172.16.1.225:10443',
+      'https://182.70.118.121:7090'
         ];
         if (!allowed.includes(evt.origin)) return;
 
