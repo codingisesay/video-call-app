@@ -58,18 +58,20 @@
 
     // 4) Also accept token via postMessage from DAO tab (works even without URL token)
     (function setupJwtPostMessage(){
-      window.addEventListener('message', function(evt){
+        window.addEventListener('message', function(evt){
         // Allow only your known DAO origins (include dev + prod)
         var allowed = [
       'https://dao.payvance.co.in',
       'https://dao.payvance.co.in:8091',
-      'https://vcall.payvance.co.in',
       'https://localhost:5173',
       'http://localhost:5173',
       'https://172.16.1.225:9443',
       'https://172.16.1.225:10443',
-      'https://182.70.118.121:7090'
+      'https://182.70.118.121:7090',
+      'https://vcall.payvance.co.in:7090',
+      'https://103.186.47.202:7090'
         ];
+
         if (!allowed.includes(evt.origin)) return;
 
         var msg = evt.data;
