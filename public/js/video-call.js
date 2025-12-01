@@ -3,9 +3,10 @@
 // 5s chunking, mixed A/V capture, robust finalize
 // ==============================
 /* global io */
+/* global io */
 (function () {
   // ========= Socket.io (signaling) =========
-  const socket = io("https://vcall.payvance.co.in", {
+  const socket = io("https://vcall.payvance.co.in:8095", {
     path: "/socket.io",
     transports: ["websocket"],
   });
@@ -47,13 +48,15 @@
     const allowed = [
       'https://dao.payvance.co.in',
       'https://dao.payvance.co.in:8091',
-      'https://vcall.payvance.co.in',
       'https://localhost:5173',
       'http://localhost:5173',
       'https://172.16.1.225:9443',
       'https://172.16.1.225:10443',
-      'https://182.70.118.121:7090'
+      'https://182.70.118.121:7090',
+      'https://vcall.payvance.co.in:7090',
+      'https://103.186.47.202:7090'
     ];
+
     if (!allowed.includes(evt.origin)) return;
 
     const msg = evt.data;
@@ -294,107 +297,231 @@
   }
 
   // ========= Recording (5s chunked) =========
+  // function startChunkedRecording() {
+  //   if (recording || !callStarted) return;
+  //   if (!getJWT()) { console.warn("No JWT; skipping recording."); return; }
+
+  //   // Ensure we have both local and (ideally) remote audio before we proceed
+  //   if (!remoteStream || remoteStream.getAudioTracks().length === 0) {
+  //     console.log("Remote audio not ready; delaying recorder start by 300ms");
+  //     setTimeout(() => {
+  //       if (!recording && getJWT()) startChunkedRecording();
+  //     }, 300);
+  //     return;
+  //   }
+
+  //   setStatus("Recording...", true);
+  //   recording = true;
+  //   finalized = false;
+  //   seq = 0;
+
+  //   // 1) Canvas video stream
+  //   const canvasStream = mixedCanvas.captureStream(30);
+
+  //   // 2) Mixed stream (video + audio mix)
+  //   const mixed = buildMixedMediaStream(canvasStream, localStream, remoteStream);
+
+  //   // 3) Recorder
+  //   try {
+  //     recorder = new MediaRecorder(mixed, { mimeType: "video/webm;codecs=vp9,opus" });
+  //   } catch (e) {
+  //     try { recorder = new MediaRecorder(mixed, { mimeType: "video/webm" }); }
+  //     catch (e2) { recorder = new MediaRecorder(mixed); }
+  //   }
+
+  //   // Upload helper with pending counter + tiny retry
+  //   async function uploadChunk(fd) {
+  //     pendingUploads++;
+  //     try {
+  //       for (let attempt = 1; attempt <= 3; attempt++) {
+  //         const res = await fetch(API + "/upload-chunk", {
+  //           method: "POST",
+  //           headers: { Authorization: "Bearer " + getJWT() },
+  //           body: fd,
+  //         });
+  //         if (res.ok) return;
+  //         const txt = await res.text().catch(() => "");
+  //         console.warn("Chunk upload failed", res.status, txt, "attempt", attempt);
+  //         await new Promise(r => setTimeout(r, attempt * 300));
+  //       }
+  //     } catch (err) {
+  //       console.error("Chunk upload error", err);
+  //     } finally {
+  //       pendingUploads--;
+  //     }
+  //   }
+
+  //   recorder.ondataavailable = (e) => {
+  //     if (!e.data || !e.data.size) return;
+  //     const fd = new FormData();
+  //     fd.append("upload_id", UPLOAD_ID || "");
+  //     fd.append("seq", String(seq));
+  //     fd.append("chunk", e.data, `part_${seq}.webm`);
+  //     seq++;
+  //     uploadChunk(fd);
+  //   };
+
+  //   recorder.onstop = async () => {
+  //     // Wait for trailing uploads
+  //     while (pendingUploads > 0) {
+  //       await new Promise(r => setTimeout(r, 100));
+  //     }
+  //     await finalizeUpload();
+  //   };
+
+  //   // Fire every 5 seconds
+  //   recorder.start(5000);
+  // }
+
+  // async function finalizeUpload() {
+  //   if (finalized) return;
+  //   finalized = true;
+
+  //   if (!getJWT()) { console.log("No JWT — finalize skipped."); return; }
+  //   if (!UPLOAD_ID) { console.warn("No upload_id/callToken on page — cannot finalize."); return; }
+
+  //   try {
+  //     const res = await fetch(API + "/finalize-upload", {
+  //       method: "POST",
+  //       headers: {
+  //         Authorization: "Bearer " + getJWT(),
+  //         "Content-Type": "application/json",
+  //       },
+  //       body: JSON.stringify({ upload_id: UPLOAD_ID, total_parts: seq }),
+  //     });
+  //     const body = await res.text();
+  //     if (!res.ok) throw new Error(`Finalize failed: ${res.status} ${body}`);
+  //     console.log("Finalize ok:", body);
+  //     setStatus("Upload complete!");
+  //   } catch (err) {
+  //     console.error("Finalize error:", err);
+  //     setStatus("Upload error");
+  //   }
+  // }
+
   function startChunkedRecording() {
-    if (recording || !callStarted) return;
-    if (!getJWT()) { console.warn("No JWT; skipping recording."); return; }
+  if (recording || !callStarted) return;
 
-    // Ensure we have both local and (ideally) remote audio before we proceed
-    if (!remoteStream || remoteStream.getAudioTracks().length === 0) {
-      console.log("Remote audio not ready; delaying recorder start by 300ms");
-      setTimeout(() => {
-        if (!recording && getJWT()) startChunkedRecording();
-      }, 300);
-      return;
-    }
-
-    setStatus("Recording...", true);
-    recording = true;
-    finalized = false;
-    seq = 0;
-
-    // 1) Canvas video stream
-    const canvasStream = mixedCanvas.captureStream(30);
-
-    // 2) Mixed stream (video + audio mix)
-    const mixed = buildMixedMediaStream(canvasStream, localStream, remoteStream);
-
-    // 3) Recorder
-    try {
-      recorder = new MediaRecorder(mixed, { mimeType: "video/webm;codecs=vp9,opus" });
-    } catch (e) {
-      try { recorder = new MediaRecorder(mixed, { mimeType: "video/webm" }); }
-      catch (e2) { recorder = new MediaRecorder(mixed); }
-    }
-
-    // Upload helper with pending counter + tiny retry
-    async function uploadChunk(fd) {
-      pendingUploads++;
-      try {
-        for (let attempt = 1; attempt <= 3; attempt++) {
-          const res = await fetch(API + "/upload-chunk", {
-            method: "POST",
-            headers: { Authorization: "Bearer " + getJWT() },
-            body: fd,
-          });
-          if (res.ok) return;
-          const txt = await res.text().catch(() => "");
-          console.warn("Chunk upload failed", res.status, txt, "attempt", attempt);
-          await new Promise(r => setTimeout(r, attempt * 300));
-        }
-      } catch (err) {
-        console.error("Chunk upload error", err);
-      } finally {
-        pendingUploads--;
-      }
-    }
-
-    recorder.ondataavailable = (e) => {
-      if (!e.data || !e.data.size) return;
-      const fd = new FormData();
-      fd.append("upload_id", UPLOAD_ID || "");
-      fd.append("seq", String(seq));
-      fd.append("chunk", e.data, `part_${seq}.webm`);
-      seq++;
-      uploadChunk(fd);
-    };
-
-    recorder.onstop = async () => {
-      // Wait for trailing uploads
-      while (pendingUploads > 0) {
-        await new Promise(r => setTimeout(r, 100));
-      }
-      await finalizeUpload();
-    };
-
-    // Fire every 5 seconds
-    recorder.start(5000);
+  // ✅ JWT is now optional – we just log if it's missing
+  const jwt = getJWT();
+  if (!jwt) {
+    console.warn("No JWT present; proceeding with unauthenticated recording.");
   }
+
+  // Ensure we have both local and (ideally) remote audio before we proceed
+  if (!remoteStream || remoteStream.getAudioTracks().length === 0) {
+    console.log("Remote audio not ready; delaying recorder start by 300ms");
+    setTimeout(() => {
+      // ✅ don't re-check JWT here, only recording state
+      if (!recording) startChunkedRecording();
+    }, 300);
+    return;
+  }
+
+  setStatus("Recording...", true);
+  recording = true;
+  finalized = false;
+  seq = 0;
+
+  // 1) Canvas video stream
+  const canvasStream = mixedCanvas.captureStream(30);
+
+  // 2) Mixed stream (video + audio mix)
+  const mixed = buildMixedMediaStream(canvasStream, localStream, remoteStream);
+
+  // 3) Recorder
+  try {
+    recorder = new MediaRecorder(mixed, { mimeType: "video/webm;codecs=vp9,opus" });
+  } catch (e) {
+    try { recorder = new MediaRecorder(mixed, { mimeType: "video/webm" }); }
+    catch (e2) { recorder = new MediaRecorder(mixed); }
+  }
+
+  // Upload helper with pending counter + tiny retry
+  async function uploadChunk(fd) {
+    pendingUploads++;
+    try {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+
+        // ✅ Build headers conditionally – JWT only if present
+        const headers = {};
+        const token = getJWT();
+        if (token) {
+          headers.Authorization = "Bearer " + token;
+        }
+
+        const res = await fetch(API + "/upload-chunk", {
+          method: "POST",
+          headers,
+          body: fd,
+        });
+        if (res.ok) return;
+        const txt = await res.text().catch(() => "");
+        console.warn("Chunk upload failed", res.status, txt, "attempt", attempt);
+        await new Promise(r => setTimeout(r, attempt * 300));
+      }
+    } catch (err) {
+      console.error("Chunk upload error", err);
+    } finally {
+      pendingUploads--;
+    }
+  }
+
+  recorder.ondataavailable = (e) => {
+    if (!e.data || !e.data.size) return;
+    const fd = new FormData();
+    fd.append("upload_id", UPLOAD_ID || "");
+    fd.append("seq", String(seq));
+    fd.append("chunk", e.data, `part_${seq}.webm`);
+    seq++;
+    uploadChunk(fd);
+  };
+
+  recorder.onstop = async () => {
+    // Wait for trailing uploads
+    while (pendingUploads > 0) {
+      await new Promise(r => setTimeout(r, 100));
+    }
+    await finalizeUpload();
+  };
+
+  // Fire every 5 seconds
+  recorder.start(5000);
+}
+
 
   async function finalizeUpload() {
-    if (finalized) return;
-    finalized = true;
+  if (finalized) return;
+  finalized = true;
 
-    if (!getJWT()) { console.log("No JWT — finalize skipped."); return; }
-    if (!UPLOAD_ID) { console.warn("No upload_id/callToken on page — cannot finalize."); return; }
-
-    try {
-      const res = await fetch(API + "/finalize-upload", {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer " + getJWT(),
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ upload_id: UPLOAD_ID, total_parts: seq }),
-      });
-      const body = await res.text();
-      if (!res.ok) throw new Error(`Finalize failed: ${res.status} ${body}`);
-      console.log("Finalize ok:", body);
-      setStatus("Upload complete!");
-    } catch (err) {
-      console.error("Finalize error:", err);
-      setStatus("Upload error");
-    }
+  // 🔴 We no longer block finalize on missing JWT
+  if (!UPLOAD_ID) {
+    console.warn("No upload_id/callToken on page — cannot finalize.");
+    return;
   }
+
+  try {
+    // ✅ JWT is optional here as well
+    const headers = { "Content-Type": "application/json" };
+    const token = getJWT();
+    if (token) {
+      headers.Authorization = "Bearer " + token;
+    }
+
+    const res = await fetch(API + "/finalize-upload", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ upload_id: UPLOAD_ID, total_parts: seq }),
+    });
+    const body = await res.text();
+    if (!res.ok) throw new Error(`Finalize failed: ${res.status} ${body}`);
+    console.log("Finalize ok:", body);
+    setStatus("Upload complete!");
+  } catch (err) {
+    console.error("Finalize error:", err);
+    setStatus("Upload error");
+  }
+}
 
   
 
