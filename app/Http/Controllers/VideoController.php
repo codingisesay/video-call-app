@@ -370,24 +370,71 @@ private function authorizeAgent(Request $request, VideoMeeting $meeting)
         catch (\Throwable $e) { return false; }
     }
 
-    private function notifyDao(?string $jwtToken, ?string $applicationId): void
-    {
-        if (!$jwtToken || !$applicationId) return;
-        try {
-            $daoApiUrl = rtrim(env('DAO_API_URL'), '/') . '/api/video-status-update';
-            $daoResponse = Http::withHeaders([
-                'Authorization' => 'Bearer ' . $jwtToken,
-                'Accept'        => 'application/json',
-            ])->withOptions(['verify' => false])->post($daoApiUrl, [
-                'application_id' => $applicationId,
-                'status'         => 'Pending',
-            ]);
-            Log::info('DAO API (notify):', ['status' => $daoResponse->status()]);
-            Log::info('DAO API (notify):', ['url' => $daoApiUrl]);
-        } catch (\Throwable $e) {
-            Log::error('DAO notify error: ' . $e->getMessage());
-        }
+    // private function notifyDao(?string $jwtToken, ?string $applicationId): void
+    // {
+    //     if (!$jwtToken || !$applicationId) return;
+    //     try {
+    //         $daoApiUrl = rtrim(env('DAO_API_URL'), '/') . '/api/video-status-update';
+    //         $daoResponse = Http::withHeaders([
+    //             'Authorization' => 'Bearer ' . $jwtToken,
+    //             'Accept'        => 'application/json',
+    //         ])->withOptions(['verify' => false])->post($daoApiUrl, [
+    //             'application_id' => $applicationId,
+    //             'status'         => 'Pending',
+    //         ]);
+    //         Log::info('DAO API (notify):', ['status' => $daoResponse->status()]);
+    //         Log::info('DAO API (notify):', ['url' => $daoApiUrl]);
+    //     } catch (\Throwable $e) {
+    //         Log::error('DAO notify error: ' . $e->getMessage());
+    //     }
+    // }
+
+    private function notifyDao(?string $jwtToken, ?string $applicationId, array $meta = []): void
+{
+    // At least need application id
+    if (!$applicationId) {
+        Log::warning('DAO notify skipped: missing application_id');
+        return;
     }
+
+    try {
+        $daoApiUrl = rtrim(env('DAO_API_URL'), '/') . '/api/video-status-update';
+
+        // Base payload
+        $payload = array_merge([
+            'application_id' => $applicationId,
+            'status'         => 'Pending',
+        ], $meta);
+
+        // Build HTTP client
+        $http = Http::withHeaders([
+            'Accept' => 'application/json',
+        ])->withOptions(['verify' => false]);
+
+        // Attach JWT only if present
+        if ($jwtToken) {
+            $http = $http->withToken($jwtToken);
+        } else {
+            Log::warning('DAO notify without JWT', [
+                'application_id' => $applicationId,
+                'url'            => $daoApiUrl,
+            ]);
+        }
+
+        $daoResponse = $http->post($daoApiUrl, $payload);
+
+        Log::info('DAO API (notify)', [
+            'status' => $daoResponse->status(),
+            'url'    => $daoApiUrl,
+            'body'   => $daoResponse->body(),
+        ]);
+    } catch (\Throwable $e) {
+        Log::error('DAO notify error', [
+            'message'        => $e->getMessage(),
+            'application_id' => $applicationId,
+        ]);
+    }
+}
 
 
 public function fetchVideoDetailsByApplicationOrKyc(Request $request)
