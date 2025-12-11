@@ -12,33 +12,35 @@
   });
 
   // ========= DOM refs =========
-  const mixedCanvas = document.getElementById("mixedCanvas");
-  const ctx = mixedCanvas.getContext("2d");
-  const localVideo = document.getElementById("localVideo");
-  const remoteVideo = document.getElementById("remoteVideo");
-  const statusBadge = document.getElementById("statusBadge");
-  const hangupBtn = document.getElementById("hangupBtn");
+  const mixedCanvas  = document.getElementById("mixedCanvas");
+  const ctx          = mixedCanvas.getContext("2d");
+  const localVideo   = document.getElementById("localVideo");
+  const remoteVideo  = document.getElementById("remoteVideo");
+  const statusBadge  = document.getElementById("statusBadge");
+  const hangupBtn    = document.getElementById("hangupBtn");
 
   // ========= App / API context =========
-  const API = (window.Laravel && window.Laravel.apiUrl) || "/api";
-  const UPLOAD_ID = (window.Laravel && window.Laravel.callToken) || null; // meeting_token or self-kyc upload_id
+  const API       = (window.Laravel && window.Laravel.apiUrl) || "/api";
+  // meeting_token or self-kyc upload_id
+  const UPLOAD_ID = (window.Laravel && window.Laravel.callToken) || null;
+
   function getJWT() {
     return (window.Laravel && window.Laravel.jwtToken) || null;
   }
 
   // ========= State =========
-  let localStream = null;
-  let remoteStream = null;
+  let localStream   = null;
+  let remoteStream  = null;
   let peerConnection = null;
 
   let mixAnimationId = null;
-  let callStarted = false;
-  let callEnded = false;
+  let callStarted    = false;
+  let callEnded      = false;
 
-  let recorder = null;
-  let recording = false;
-  let finalized = false;
-  let seq = 0;
+  let recorder   = null;
+  let recording  = false;
+  let finalized  = false;
+  let seq        = 0;      // IMPORTANT: global, never reset in startChunkedRecording
   let pendingUploads = 0;
 
   // ========= Accept JWT via postMessage from DAO =========
@@ -91,7 +93,7 @@
 
   // ========= PiP drag for local preview =========
   const pipPos = { x: 420, y: 300 };
-  let dragging = false;
+  let dragging  = false;
   let dragOffset = { x: 0, y: 0 };
 
   function setStatus(text, isRecording = false) {
@@ -103,7 +105,7 @@
   function updatePipPosition() {
     if (!localVideo) return;
     localVideo.style.left = pipPos.x + "px";
-    localVideo.style.top = pipPos.y + "px";
+    localVideo.style.top  = pipPos.y + "px";
   }
 
   localVideo.addEventListener("mousedown", (e) => {
@@ -125,7 +127,7 @@
 
   // ========= Audio mix helpers (local + remote -> one track) =========
   let audioCtx = null;
-  let mixDest = null;
+  let mixDest  = null;
 
   document.body.addEventListener("click", async () => {
     try {
@@ -292,7 +294,12 @@
             startChunkedRecording();
           }
         }
-      } else if (["failed", "disconnected", "closed"].includes(st)) {
+      } else if (st === "disconnected") {
+        // IMPORTANT: do NOT stop recording here. This may be TEMPORARY.
+        setStatus("Network issue – trying to reconnect...");
+        // Keep recording running; WebRTC often recovers from 'disconnected'.
+      } else if (["failed", "closed"].includes(st)) {
+        // Real end-of-call / unrecoverable:
         setStatus("Call disconnected");
         stopPiPDrawing();
         stopRecording();
@@ -309,7 +316,7 @@
 
   // ========= PiP drawing to canvas =========
   function startPiPDrawing() {
-    mixedCanvas.width = 640;
+    mixedCanvas.width  = 640;
     mixedCanvas.height = 480;
 
     function draw() {
@@ -352,7 +359,8 @@
     setStatus("Recording...", true);
     recording = true;
     finalized = false;
-    seq = 0;
+    // IMPORTANT: we do NOT reset seq here anymore.
+    // seq continues across any accidental stop/start, preventing overwrites.
 
     const canvasStream = mixedCanvas.captureStream(30);
     const mixed = buildMixedMediaStream(canvasStream, localStream, remoteStream);
@@ -414,13 +422,14 @@
     };
 
     recorder.onstop = async () => {
+      // Wait for all pending uploads to finish, then finalize once.
       while (pendingUploads > 0) {
         await new Promise((r) => setTimeout(r, 100));
       }
       await finalizeUpload();
     };
 
-    recorder.start(5000);
+    recorder.start(5000); // 5 sec chunks
   }
 
   async function finalizeUpload() {
@@ -434,7 +443,7 @@
 
     try {
       const headers = { "Content-Type": "application/json" };
-      const token = getJWT();
+      const token   = getJWT();
       if (token) {
         headers.Authorization = "Bearer " + token;
       }
@@ -466,7 +475,7 @@
 
   function hangup() {
     setStatus("Call Ended");
-    callEnded = true;
+    callEnded   = true;
     callStarted = false;
 
     try {
